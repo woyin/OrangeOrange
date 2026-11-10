@@ -1,0 +1,280 @@
+{
+  "schema": 1,
+  "baseline": "docs/SRS.md v1.0",
+  "environment": {
+    "development": "macOS arm64 + Colima Docker Linux arm64",
+    "verifiedPlatforms": [
+      "linux/arm64"
+    ],
+    "openWrtVerified": false,
+    "realModelVerified": false,
+    "realTelegramVerified": false,
+    "soakDurationMs": 0
+  },
+  "cases": [
+    {
+      "id": "AT-001",
+      "status": "PARTIAL",
+      "evidence": [
+        "tests/browser/console.spec.ts"
+      ],
+      "notes": "已有本地证据，完整部署或外部条件仍未验收，见docs/TESTING.md。",
+      "scope": "macOS arm64; actual HTTP/SQLite/Pi with synthetic upstreams"
+    },
+    {
+      "id": "AT-002",
+      "status": "PASS",
+      "evidence": [
+        ".github/workflows/containers.yml",
+        "deploy/smoke.mjs",
+        "deploy/smoke.mjs"
+      ],
+      "notes": "实际生产镜像非root/read-only/cap-drop/no-new-privileges/命名卷/localhost；无privileged或Docker Socket。",
+      "scope": "Linux ARM64 container"
+    },
+    {
+      "id": "AT-003",
+      "status": "BLOCKED",
+      "evidence": [
+        "tests/control-api.test.ts"
+      ],
+      "notes": "已有本地证据，完整部署或外部条件仍未验收，见docs/TESTING.md。",
+      "scope": "macOS arm64; actual HTTP/SQLite/Pi with synthetic upstreams"
+    },
+    {
+      "id": "AT-004",
+      "status": "PASS",
+      "evidence": [
+        "tests/control-api.test.ts"
+      ],
+      "notes": "本地自动化用例通过，不表示真实外部服务或目标设备已验证。",
+      "scope": "macOS arm64; actual HTTP/SQLite/Pi with synthetic upstreams"
+    },
+    {
+      "id": "AT-005",
+      "status": "PASS",
+      "evidence": [
+        "tests/control-api.test.ts",
+        "tests/gateway.test.ts"
+      ],
+      "notes": "本地自动化用例通过，不表示真实外部服务或目标设备已验证。",
+      "scope": "macOS arm64; actual HTTP/SQLite/Pi with synthetic upstreams"
+    },
+    {
+      "id": "AT-006",
+      "status": "PARTIAL",
+      "evidence": [
+        "tests/control-crash.test.ts"
+      ],
+      "notes": "已有本地证据，完整部署或外部条件仍未验收，见docs/TESTING.md。",
+      "scope": "macOS arm64; actual HTTP/SQLite/Pi with synthetic upstreams"
+    },
+    {
+      "id": "AT-007",
+      "status": "PASS",
+      "evidence": [
+        "tests/control-crash.test.ts",
+        "tests/control-policy.test.ts"
+      ],
+      "notes": "本地自动化用例通过，不表示真实外部服务或目标设备已验证。",
+      "scope": "macOS arm64; actual HTTP/SQLite/Pi with synthetic upstreams"
+    },
+    {
+      "id": "AT-008",
+      "status": "PASS",
+      "evidence": [
+        "tests/control-crash.test.ts",
+        "tests/control-api.test.ts"
+      ],
+      "notes": "本地自动化用例通过，不表示真实外部服务或目标设备已验证。",
+      "scope": "macOS arm64; actual HTTP/SQLite/Pi with synthetic upstreams"
+    },
+    {
+      "id": "AT-009",
+      "status": "PARTIAL",
+      "evidence": [
+        "tests/schedules.test.ts",
+        "tests/control-api.test.ts"
+      ],
+      "notes": "已有本地证据，完整部署或外部条件仍未验收，见docs/TESTING.md。",
+      "scope": "macOS arm64; actual HTTP/SQLite/Pi with synthetic upstreams"
+    },
+    {
+      "id": "AT-010",
+      "status": "PASS",
+      "evidence": [
+        "tests/control-api.test.ts"
+      ],
+      "notes": "本地自动化用例通过，不表示真实外部服务或目标设备已验证。",
+      "scope": "macOS arm64; actual HTTP/SQLite/Pi with synthetic upstreams"
+    },
+    {
+      "id": "AT-011",
+      "status": "PASS",
+      "evidence": [
+        "tests/control-runtime-extended.test.ts"
+      ],
+      "notes": "本地自动化用例通过，不表示真实外部服务或目标设备已验证。",
+      "scope": "macOS arm64; actual HTTP/SQLite/Pi with synthetic upstreams"
+    },
+    {
+      "id": "AT-012",
+      "status": "PASS",
+      "evidence": [
+        "tests/control-runtime-extended.test.ts"
+      ],
+      "notes": "本地自动化用例通过，不表示真实外部服务或目标设备已验证。",
+      "scope": "macOS arm64; actual HTTP/SQLite/Pi with synthetic upstreams"
+    },
+    {
+      "id": "AT-013",
+      "status": "PASS",
+      "evidence": [
+        "tests/control-runtime-extended.test.ts",
+        "tests/control-store-fixes.test.ts"
+      ],
+      "notes": "本地自动化用例通过，不表示真实外部服务或目标设备已验证。",
+      "scope": "macOS arm64; actual HTTP/SQLite/Pi with synthetic upstreams"
+    },
+    {
+      "id": "AT-014",
+      "status": "PASS",
+      "evidence": [
+        "tests/control-policy.test.ts",
+        "tests/control-runtime-extended.test.ts"
+      ],
+      "notes": "本地自动化用例通过，不表示真实外部服务或目标设备已验证。",
+      "scope": "macOS arm64; actual HTTP/SQLite/Pi with synthetic upstreams"
+    },
+    {
+      "id": "AT-015",
+      "status": "PASS",
+      "evidence": [
+        "tests/control-boundary.test.ts",
+        "tests/workspace.test.ts"
+      ],
+      "notes": "本地自动化用例通过，不表示真实外部服务或目标设备已验证。",
+      "scope": "macOS arm64; actual HTTP/SQLite/Pi with synthetic upstreams"
+    },
+    {
+      "id": "AT-016",
+      "status": "PASS",
+      "evidence": [
+        "tests/web.test.ts",
+        "tests/web-http.test.ts"
+      ],
+      "notes": "本地自动化用例通过，不表示真实外部服务或目标设备已验证。",
+      "scope": "macOS arm64; actual HTTP/SQLite/Pi with synthetic upstreams"
+    },
+    {
+      "id": "AT-017",
+      "status": "PASS",
+      "evidence": [
+        "tests/control-security-extended.test.ts"
+      ],
+      "notes": "本地自动化用例通过，不表示真实外部服务或目标设备已验证。",
+      "scope": "macOS arm64; actual HTTP/SQLite/Pi with synthetic upstreams"
+    },
+    {
+      "id": "AT-018",
+      "status": "PASS",
+      "evidence": [
+        "tests/control-api.test.ts",
+        "apps/web/src/events.check.ts"
+      ],
+      "notes": "本地自动化用例通过，不表示真实外部服务或目标设备已验证。",
+      "scope": "macOS arm64; actual HTTP/SQLite/Pi with synthetic upstreams"
+    },
+    {
+      "id": "AT-019",
+      "status": "PASS",
+      "evidence": [
+        "tests/control-backup-http.test.ts",
+        "tests/control-operations-faults.test.ts",
+        "deploy/smoke.mjs"
+      ],
+      "notes": "实际生产镜像在全新容器/空数据卷恢复，Owner登录、会话和Memory可用；真实外部凭据需重新配置。",
+      "scope": "Linux ARM64 container"
+    },
+    {
+      "id": "AT-020",
+      "status": "PASS",
+      "evidence": [
+        "tests/control-api.test.ts",
+        "tests/control-maintenance.test.ts"
+      ],
+      "notes": "本地自动化用例通过，不表示真实外部服务或目标设备已验证。",
+      "scope": "macOS arm64; actual HTTP/SQLite/Pi with synthetic upstreams"
+    },
+    {
+      "id": "AT-021",
+      "status": "PASS",
+      "evidence": [
+        "tests/control-maintenance-http.test.ts",
+        "tests/control-runtime-extended.test.ts"
+      ],
+      "notes": "本地自动化用例通过，不表示真实外部服务或目标设备已验证。",
+      "scope": "macOS arm64; actual HTTP/SQLite/Pi with synthetic upstreams"
+    },
+    {
+      "id": "AT-022",
+      "status": "PASS",
+      "evidence": [
+        "tests/browser/console.spec.ts",
+        "tests/control-runtime-extended.test.ts"
+      ],
+      "notes": "本地自动化用例通过，不表示真实外部服务或目标设备已验证。",
+      "scope": "macOS arm64; actual HTTP/SQLite/Pi with synthetic upstreams"
+    },
+    {
+      "id": "AT-023",
+      "status": "BLOCKED",
+      "evidence": [
+        ".github/workflows/containers.yml",
+        "deploy/smoke.mjs"
+      ],
+      "notes": "AMD64 Node探针可执行；本地legacy Docker builder跨架构失败，最终双架构应用验收未完成。",
+      "scope": "macOS arm64; actual HTTP/SQLite/Pi with synthetic upstreams"
+    },
+    {
+      "id": "AT-024",
+      "status": "PARTIAL",
+      "evidence": [
+        "scripts/control-soak.ts"
+      ],
+      "notes": "脚本15秒短跑通过，实际72h未运行。",
+      "scope": "macOS arm64; actual HTTP/SQLite/Pi with synthetic upstreams"
+    }
+  ],
+  "localVerification": {
+    "command": "npm run test:all",
+    "testFiles": 30,
+    "tests": 135,
+    "frontendEventTests": 3,
+    "browserTests": 4,
+    "httpClientContract": "PASS",
+    "soakSmoke": {
+      "durationMs": 15153,
+      "created": 14,
+      "succeeded": 14,
+      "lostConfirmations": 2,
+      "uncertainDeliveries": 2,
+      "full72Hours": false
+    }
+  },
+  "containerVerification": {
+    "platform": "linux/arm64",
+    "runtimeImage": "sha256:e77e1a9a7528bf51615e2396ded64822866dbcaf07193d4a98d287687d0680be",
+    "smoke": "PASS",
+    "freshContainerRestore": "PASS",
+    "testFiles": 30,
+    "tests": 135,
+    "limits": {
+      "memoryBytes": 1073741824,
+      "cpus": 2,
+      "readOnlyRoot": true,
+      "capDropAll": true,
+      "nonRoot": true
+    }
+  }
+}

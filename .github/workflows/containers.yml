@@ -1,0 +1,72 @@
+name: Container verification
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build native probe
+        run: DOCKER_BUILDKIT=0 docker build --target probe -t hda:probe -f deploy/Dockerfile .
+      - name: Run Linux recovery and policy tests
+        run: >-
+          docker run --rm --read-only
+          --tmpfs /tmp:rw,nosuid,nodev,size=256m
+          --tmpfs /app/node_modules/.vite-temp:rw,nosuid,nodev,uid=1000,gid=1000,size=16m
+          --tmpfs /app/node_modules/.vite:rw,nosuid,nodev,uid=1000,gid=1000,size=32m
+          --cap-drop ALL --security-opt no-new-privileges --memory 1g --cpus 2
+          hda:probe npm test
+      - name: Type check
+        run: docker run --rm hda:probe npm run typecheck
+      - name: Dependency audit
+        run: docker run --rm hda:probe npm audit --audit-level=high
+      - name: Build production container
+        run: DOCKER_BUILDKIT=0 docker build --target runtime -t hda:runtime -f deploy/Dockerfile .
+      - name: Container smoke
+        run: node deploy/smoke.mjs
+      - name: Scan production container
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: hda:runtime
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: false
+  browser:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.14.1
+          cache: npm
+      - run: npm ci
+      - run: npm --prefix apps/web ci
+      - run: npm run build:all
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - run: npm run test:web-console
+      - run: npm --prefix apps/web run test:integration
+      - name: Synthetic outage soak harness smoke
+        run: npm run test:soak -- --duration-seconds=15 --interval-seconds=1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-and-soak-evidence
+          path: |
+            test-results/
+            artifacts/control-soak.json
+  secrets:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Secret scan
+        run: docker run --rm -v "$PWD:/repo:ro" zricethezav/gitleaks:v8.24.3 detect --source /repo --redact --no-banner

@@ -1,0 +1,12 @@
+node_modules/
+.pi/
+.jev-fabric-native/
+.DS_Store
+dist/
+coverage/
+.orangeorange/
+.env
+*.log
+test-results/
+playwright-report/
+artifacts/

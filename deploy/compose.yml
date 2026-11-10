@@ -1,0 +1,47 @@
+services:
+  hda:
+    image: orangeorange/hda:0.1.0
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: runtime
+    restart: unless-stopped
+    init: true
+    user: "1000:1000"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "127.0.0.1:8787:8787"
+    environment:
+      HDA_DATA_DIR: /data
+      HDA_WORKSPACE: /workspace
+      HDA_HOST: 0.0.0.0
+      HDA_PORT: "8787"
+      HDA_WEB_DIR: /app/apps/web/dist
+      NODE_ENV: production
+    volumes:
+      - hda-data:/data
+      - hda-workspace:/workspace:ro
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=64m
+    mem_limit: 1g
+    cpus: 2
+    pids_limit: 128
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+volumes:
+  hda-data:
+  hda-workspace:

@@ -1,0 +1,16 @@
+# 仅用于隔离M0探针：context的npm-cache必须来自当前package-lock的全新公开依赖缓存。
+FROM node:24.14.1-bookworm-slim AS build
+RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY npm-cache /tmp/npm-cache
+ENV npm_config_nodedir=/usr/local
+RUN npm ci --offline --cache=/tmp/npm-cache --no-audit --no-fund && rm -rf /tmp/npm-cache
+COPY tsconfig*.json vitest.config.ts ./
+COPY src ./src
+COPY tests ./tests
+COPY prompts ./prompts
+COPY skills ./skills
+COPY scripts ./scripts
+USER node
+CMD ["npm", "test", "--", "tests/recovery.test.ts", "tests/ownership.test.ts", "tests/tools.test.ts", "tests/gateway.test.ts"]

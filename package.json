@@ -1,0 +1,65 @@
+{
+  "name": "orangeorange",
+  "version": "0.1.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=24.14.1 <25"
+  },
+  "bin": {
+    "orange": "dist/cli.js"
+  },
+  "scripts": {
+    "dev": "tsx src/cli.ts",
+    "start": "node dist/cli.js",
+    "build": "tsc -p tsconfig.build.json",
+    "build:server": "tsc -p tsconfig.build.json",
+    "build:web": "npm --prefix apps/web run build",
+    "build:all": "npm run build:server && npm run build:web",
+    "serve": "node dist/control/main.js",
+    "dev:server": "tsx src/control/main.ts",
+    "test:control": "vitest run tests/control tests/pi-adapter",
+    "test:e2e": "playwright test",
+    "test:all": "npm run typecheck && npm test && npm run build:all && npm run test:web-console && npm --prefix apps/web run test:integration && npm run test:e2e",
+    "test:soak": "tsx scripts/control-soak.ts",
+    "typecheck:web": "npm --prefix apps/web run typecheck",
+    "test:web-console": "npm --prefix apps/web test",
+    "release:check": "node scripts/check-release.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:recovery": "vitest run tests/recovery.test.ts",
+    "test:ownership": "vitest run tests/ownership.test.ts",
+    "test:cli": "vitest run tests/cli.test.ts",
+    "test:workspace": "vitest run tests/workspace.test.ts",
+    "test:skills": "vitest run tests/skills.test.ts",
+    "test:memory": "vitest run tests/memory.test.ts tests/scopes-migration.test.ts",
+    "test:schedules": "vitest run tests/schedules.test.ts",
+    "test:web": "vitest run tests/web.test.ts tests/web-http.test.ts",
+    "test:channels": "vitest run tests/channel-adapters.test.ts tests/gateway.test.ts",
+    "test:history": "vitest run tests/history.test.ts",
+    "test:reminders": "vitest run tests/reminders.test.ts",
+    "smoke:live": "tsx scripts/smoke-live.ts",
+    "smoke:install": "node scripts/smoke-install.mjs"
+  },
+  "dependencies": {
+    "@earendil-works/chord": "1.5.0",
+    "@earendil-works/pi-ai": "1.5.0",
+    "@earendil-works/pi-durable": "1.5.0",
+    "@earendil-works/pi-schema": "1.5.0",
+    "cheerio": "1.1.2",
+    "cron-parser": "5.4.0",
+    "fs-ext": "2.1.1",
+    "ipaddr.js": "2.2.0",
+    "qrcode-terminal": "0.12.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1",
+    "@types/fs-ext": "2.0.3",
+    "@types/node": "24.10.1",
+    "@types/qrcode-terminal": "0.12.2",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "vitest": "4.1.12"
+  }
+}
