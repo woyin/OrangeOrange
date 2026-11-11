@@ -142,7 +142,7 @@ export class ControlStore {
     this.db.prepare('DELETE FROM memory_fts WHERE id=?').run(id);
     const expiry=m.expires_at??m.expiresAt;
     const at=typeof expiry==='string'?Date.parse(expiry):Number(expiry);
-    if(m.status==='active'&&!m.secret&&!m.sensitive&&m.kind!=='secret'&&(expiry==null||at>Date.now())) this.db.prepare('INSERT INTO memory_fts(id,scope,content) VALUES(?,?,?)').run(id,String(m.scope??'global'),memoryTokens(String(m.content??'')));
+    if(m.status==='active'&&!m.secret&&(!m.sensitive||m.sensitiveApproved===true)&&m.kind!=='secret'&&(expiry==null||at>Date.now())) this.db.prepare('INSERT INTO memory_fts(id,scope,content) VALUES(?,?,?)').run(id,String(m.scope??'global'),memoryTokens(String(m.content??'')));
   }
   // Internal get/list remain trusted APIs. Expose full history only after explicit Owner authorization.
   memoryRevisions(memoryId:string,principalId:string):unknown[] {
@@ -156,7 +156,7 @@ export class ControlStore {
     const match=memoryTokens(query).split(' ').map(token=>'"'+token+'"').join(' AND ');
     const sql='SELECT id FROM memory_fts WHERE memory_fts MATCH ?'+(scope?' AND scope=?':'')+' ORDER BY rank';
     return this.db.prepare(sql).all(...(scope?[match,scope]:[match])).map(r=>this.get<Record<string,unknown>>('memories',String(r.id))).filter(m=>{
-      if(!m||m.status!=='active'||m.secret||m.sensitive||m.kind==='secret'||!String(m.content??'').toLowerCase().includes(query.toLowerCase()))return false;
+      if(!m||m.status!=='active'||m.secret||(m.sensitive&&m.sensitiveApproved!==true)||m.kind==='secret'||!String(m.content??'').toLowerCase().includes(query.toLowerCase()))return false;
       const expiry=m.expires_at??m.expiresAt;
       return expiry==null||(typeof expiry==='string'?Date.parse(expiry):Number(expiry))>Date.now();
     }).slice(0,100);

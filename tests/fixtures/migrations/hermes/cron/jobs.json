@@ -1,0 +1,12 @@
+{
+  "jobs": [
+    {
+      "id": "hermes-job-1",
+      "name": "Weekly review",
+      "enabled": false,
+      "schedule": { "kind": "cron", "expr": "0 18 * * 5", "timezone": "UTC" },
+      "prompt": "Review notes. client_secret=weekly-secret-value",
+      "delivery": { "platform": "telegram", "chat_id": "123" }
+    }
+  ]
+}

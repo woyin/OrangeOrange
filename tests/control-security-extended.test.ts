@@ -10,7 +10,7 @@ test('AT-017 OpenAPI每个受保护method/path未登录均拒绝，包含SSE', a
         const spec = JSON.parse(await readFile(new URL('../docs/openapi.json', import.meta.url), 'utf8'));
         const tested: string[] = [];
         for (const [path, operations] of Object.entries(spec.paths)) for (const method of Object.keys(operations as object)) {
-            if (!['get', 'post', 'patch', 'put', 'delete'].includes(method) || ['/setup', '/setup/status', '/auth/login'].includes(path)) continue;
+            if (!['get', 'post', 'patch', 'put', 'delete'].includes(method) || ['/setup', '/setup/status', '/auth/login'].includes(path) || (operations as Record<string, any>)[method]?.security?.length === 0) continue;
             const route = path.replace(/\{[^}]+\}/g, 'missing').slice(1);
             const r = await f.request(route, method.toUpperCase(), method === 'get' ? undefined : {}, { Cookie: '' });
             expect([401, 403], `${method} ${path}`).toContain(r.response.status);

@@ -1,6 +1,6 @@
-import { statfsSync, statSync, mkdirSync, lstatSync, chmodSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { statfsSync, statSync, mkdirSync, lstatSync, chmodSync, writeFileSync, readFileSync, renameSync, unlinkSync, opendirSync, openSync, fsyncSync, closeSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
 import type { ControlStore } from './store.js';
 
 type RecordData = Record<string, any>;
@@ -30,6 +30,8 @@ export class MaintenanceService {
     const config=s.setting<RecordData>('config',{});
     const configured=s.setting<unknown>('retentionDays',config.retentionDays??30);
     if(typeof configured!=='number'||!Number.isInteger(configured)||configured<1||configured>3650)throw new Error('INVALID_RETENTION_DAYS');
+    const artifactDays=config.artifactRetentionDays??configured;
+    if(typeof artifactDays!=='number'||!Number.isInteger(artifactDays)||artifactDays<1||artifactDays>3650)throw new Error('INVALID_ARTIFACT_RETENTION_DAYS');
     const cutoff=now-configured*86400000;
     const result:RetentionResult={sessions:0,tasks:0,events:0,memories:0,cutoff,eventFloor:0};
     s.transaction(()=>{
@@ -37,18 +39,36 @@ export class MaintenanceService {
         const session=JSON.parse(String(row.value));
         if(time(session.expiresAt??session.expires_at)<=now){s.remove('sessions',String(row.id));result.sessions++;}
       }
-      const children=['task_steps','operations','outbox','model_usage'];
+      const children=['task_steps','operations','outbox','model_usage','gmail_intents'];
       const records=Object.fromEntries(children.map(kind=>[kind,s.list<RecordData>(kind)]));
       const approvals=s.list<RecordData>('approvals');
       for(const task of s.list<RecordData>('tasks')) {
         if(!terminal.has(task.status)||!(time(task.updatedAt??task.updated_at)<cutoff))continue;
         if(approvals.some(a=>taskId(a)===task.id&&['PENDING','WAITING_APPROVAL'].includes(status(a))))continue;
+        if(records.gmail_intents!.some(i=>taskId(i)===task.id&&!['CONFIRMED','FAILED','CANCELLED'].includes(status(i))))continue;
+        if(s.list<RecordData>('budget_reservations').some(r=>r.taskId===task.id&&r.state!=='settled'))continue;
         if(records.operations!.some(o=>taskId(o)===task.id&&!['CONFIRMED','FAILED','CANCELLED'].includes(status(o))))continue;
         if(records.outbox!.some(o=>taskId(o)===task.id&&!['SENT','FAILED','CANCELLED'].includes(status(o))))continue;
         if(records.task_steps!.some(o=>taskId(o)===task.id&&['RUNNING','WAITING_APPROVAL','SENDING','UNCERTAIN'].includes(status(o))))continue;
         for(const kind of children)for(const item of records[kind]!.filter(r=>taskId(r)===task.id))s.remove(kind,item.id);
         s.remove('tasks',task.id);result.tasks++;
       }
+      // Retained payloads may outlive their intent; inspect all payload secrets.
+      const refs=new Set<string>();let protectAll=false;
+      const collect=(value:unknown):void=>{
+        if(Array.isArray(value)){for(const item of value)collect(item);return;}
+        if(value&&typeof value==='object')for(const [key,item] of Object.entries(value)){if(key==='artifactId'&&typeof item==='string')refs.add(item);else collect(item);}
+      };
+      for(const task of s.list<RecordData>('tasks'))if(!terminal.has(task.status))collect(task);
+      for(const intent of s.list<RecordData>('gmail_intents'))if(!['CONFIRMED','FAILED','CANCELLED'].includes(status(intent))){
+        collect(intent);if(!s.db.prepare('SELECT 1 FROM secrets WHERE name=?').get(`gmail:payload:${intent.id}`))protectAll=true;
+      }
+      for(const row of s.db.prepare("SELECT name FROM secrets WHERE name LIKE 'gmail:payload:%'").all()){
+        try{const value=JSON.parse(s.getSecret(String(row.name))!);if(!value||typeof value!=='object'||!value.mail||typeof value.mail!=='object'||(value.mail.attachments!==undefined&&!Array.isArray(value.mail.attachments)))throw new Error('INVALID_PAYLOAD');
+          for(const ref of value.mail.attachments??[])if(!ref||typeof ref.artifactId!=='string')throw new Error('INVALID_PAYLOAD');collect(value);
+        }catch{protectAll=true;}
+      }
+      if(!protectAll)for(const artifact of s.list<RecordData>('artifacts'))if(time(artifact.createdAt)<now-artifactDays*86400000&&!refs.has(artifact.id))s.remove('artifacts',artifact.id,'maintenance');
       // Inbox/API idempotency records and their unique dedupe keys survive task removal.
       for(const row of s.db.prepare('SELECT id,value FROM entities WHERE kind=?').all('memories')) {
         const m=JSON.parse(String(row.value));
@@ -86,12 +106,34 @@ export class MaintenanceService {
     return s.db.prepare('SELECT seq,type,entity_id,at FROM events ORDER BY seq DESC LIMIT ?').all(count).map(r=>({eventId:Number(r.seq),code:'CONTROL_EVENT',correlationId:/^[a-f0-9-]{36}$/i.test(String(r.entity_id))?String(r.entity_id):undefined,at:Number(r.at)}));
   }
   async diagnostics():Promise<object> {return {version:1,schemaVersion:this.getStore().schemaVersion,maintenance:this.getStore().maintenance,metrics:await this.metrics(),logs:this.logs(),config:this.exportConfig()};}
-  rotateAudit():{file:string;lastSeq:number} {
-    const s=this.getStore();const dir=join(this.dataDir,'audit-snapshots');
-    if(lstatSync(this.dataDir).isSymbolicLink())throw new Error('UNSAFE_AUDIT_DIRECTORY');
-    mkdirSync(dir,{recursive:true,mode:0o700});if(lstatSync(dir).isSymbolicLink()||!lstatSync(dir).isDirectory())throw new Error('UNSAFE_AUDIT_DIRECTORY');chmodSync(dir,0o700);
-    const rows=s.db.prepare('SELECT * FROM audit_events ORDER BY seq').all();
-    const file=join(dir,randomUUID()+'.json');writeFileSync(file,JSON.stringify({version:1,rows}),{mode:0o600,flag:'wx'});
-    return {file,lastSeq:Number(rows.at(-1)?.seq??0)};
+  maintainAudit(now=Date.now()):{file:string;lastSeq:number} {
+    try{return this.writeAuditBatch(now);}catch(error){const e=error as NodeJS.ErrnoException & {errcode?:number};if(['ENOSPC','EDQUOT'].includes(e.code??'')||(typeof e.errcode==='number'&&(e.errcode&255)===13))throw new Error('AUDIT_DISK_FULL');throw error;}
   }
+  private writeAuditBatch(now:number):{file:string;lastSeq:number} {
+    const s=this.getStore();const days=s.setting<RecordData>('config',{}).auditSnapshotRetentionDays??30;
+    if(typeof days!=='number'||!Number.isInteger(days)||days<1||days>3650)throw new Error('INVALID_AUDIT_SNAPSHOT_RETENTION_DAYS');
+    const root=resolve(this.dataDir);const source=lstatSync(root);if(source.isSymbolicLink()||!source.isDirectory())throw new Error('UNSAFE_AUDIT_DIRECTORY');
+    const dir=join(root,'audit-snapshots');
+    try {mkdirSync(dir,{mode:0o700});}catch(error){if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error;}
+    const st=lstatSync(dir);if(st.isSymbolicLink()||!st.isDirectory())throw new Error('UNSAFE_AUDIT_DIRECTORY');chmodSync(dir,0o700);
+    const cursor=s.setting<number>('auditSnapshotCursor',0);if(!Number.isSafeInteger(cursor)||cursor<0)throw new Error('INVALID_AUDIT_CURSOR');
+    const rows=s.db.prepare('SELECT * FROM audit_events WHERE seq>? ORDER BY seq LIMIT 1000').all(cursor);
+    for(let i=0;i<rows.length;i++)if(Number(rows[i]!.seq)!==cursor+i+1)throw new Error('AUDIT_SEQUENCE_GAP');
+    let file='';let lastSeq=cursor;
+    try {
+      if(rows.length){
+        lastSeq=Number(rows.at(-1)!.seq);file=join(dir,`audit-${cursor+1}-${lastSeq}.json`);
+        const hash=createHash('sha256').update(JSON.stringify(rows)).digest('hex');const content=JSON.stringify({version:1,firstSeq:cursor+1,lastSeq,hash,rows});
+        let exists=false;try{const existing=lstatSync(file);if(!existing.isFile()||existing.isSymbolicLink()||readFileSync(file,'utf8')!==content)throw new Error('AUDIT_SNAPSHOT_CONFLICT');exists=true;}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
+        if(!exists){const temp=join(dir,`.${randomUUID()}.tmp`);try{writeFileSync(temp,content,{mode:0o600,flag:'wx'});const fd=openSync(temp,'r');try{fsyncSync(fd);}finally{closeSync(fd);}renameSync(temp,file);const dfd=openSync(dir,'r');try{fsyncSync(dfd);}finally{closeSync(dfd);}}finally{try{unlinkSync(temp);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}}}
+        // Do not append an audit event for the maintenance cursor itself.
+        s.db.prepare("INSERT INTO entities(kind,id,value) VALUES('settings','auditSnapshotCursor',?) ON CONFLICT(kind,id) DO UPDATE SET value=excluded.value").run(JSON.stringify(lastSeq));
+      }
+      if (file) s.db.prepare("INSERT OR IGNORE INTO entities(kind,id,value) VALUES('audit_snapshot_files',?,?)").run(file,JSON.stringify({file,createdAt:now,lastSeq}));
+      const stale=s.db.prepare("SELECT id,value FROM entities WHERE kind='audit_snapshot_files' ORDER BY json_extract(value,'$.createdAt') LIMIT 1000").all();
+      for(const row of stale){const record=JSON.parse(String(row.value));if(record.file===file)continue;const name=record.file.slice(dir.length+1);if(record.file!==join(dir,name)||!/^audit-\d+-\d+\.json$/.test(name))throw new Error('UNSAFE_AUDIT_DIRECTORY');try{const st=lstatSync(record.file);if(!st.isFile()||st.isSymbolicLink())throw new Error('UNSAFE_AUDIT_DIRECTORY');if(st.mtimeMs>=now-days*86400000)continue;unlinkSync(record.file);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}s.db.prepare("DELETE FROM entities WHERE kind='audit_snapshot_files' AND id=?").run(String(row.id));}
+      return {file,lastSeq};
+    }catch(error){if(['ENOSPC','EDQUOT'].includes((error as NodeJS.ErrnoException).code??''))throw new Error('AUDIT_DISK_FULL');throw error;}
+  }
+  rotateAudit():{file:string;lastSeq:number} {return this.maintainAudit();}
 }

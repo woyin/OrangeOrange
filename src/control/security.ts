@@ -43,6 +43,17 @@ export class AuthService {
   }
   authenticate(token:string):Session|undefined {const session=this.store.get<Session>('sessions',digest(token));return session&&session.expiresAt>Date.now()?session:undefined;}
   logout(token:string):void {this.store.remove('sessions',digest(token));}
+  /** Trusted offline recovery only. Caller must hold application ownership with the service stopped. */
+  recoverPassword(username:string,next:string):void {
+    if(!username.trim()||next.length<12||next.length>1024)throw new Error('INVALID_CREDENTIALS');
+    this.store.transaction(()=>{
+      const users=this.store.list<User>('users'),user=users.find(u=>u.username===username&&u.role==='Owner');
+      if(!user||users.filter(u=>u.role==='Owner').length!==1)throw new Error('OWNER_NOT_FOUND');
+      this.store.put('users',user.id,{...user,passwordHash:passwordHash(next)},'offline-owner');
+      for(const row of this.store.db.prepare("SELECT id FROM entities WHERE kind='sessions'").all())this.store.remove('sessions',String(row.id),'offline-owner');
+      this.store.audit('offline-owner','auth.recover',user.id,'sessions.revoked');
+    });
+  }
   changePassword(userId:string,current:string,next:string):void {
     if(next.length<12)throw new Error('WEAK_PASSWORD');
     this.store.transaction(()=>{

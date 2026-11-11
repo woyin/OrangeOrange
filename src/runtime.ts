@@ -27,7 +27,7 @@ import {
   LiveDoc,
 } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
-import { obj, opt, str } from "@earendil-works/pi-schema";
+import { obj, opt, str, arr } from "@earendil-works/pi-schema";
 import { type Config, id, text, parseTime } from "./config.js";
 import { AppState, Profile } from "./state.js";
 import { saveMemory, deleteMemory, selectMemories } from "./memory.js";
@@ -61,8 +61,12 @@ export type RuntimeOptions = {
   web?: ReturnType<typeof createWeb>;
   privatePaths?: string[];
   disableLegacyAutomation?: boolean;
+  reviewedSkills?: (conversationId: number) => Array<{ name: string; description: string }>;
+  mailConnections?: (conversationId: number) => Promise<unknown>;
+  mailProposal?: (conversationId: number, args: Record<string, unknown>) => Promise<unknown>;
   /** 同步持久化预留/拒绝；抛错发生在调用 Models 请求前。计量与价格上界由调用方提供。 */
-  modelAdmission?: (request:{method:string;model:unknown;context:unknown;options:unknown;conversationId:number})=>{maxTokens?:number}|void;
+  modelAdmission?: (request:{method:string;model:unknown;context:unknown;options:unknown;conversationId:number})=>{maxTokens?:number;reservationId?:string}|void;
+  modelSettled?: (request:{conversationId:number;reservationId?:string;message:unknown})=>void;
   /** 在每次模型发送前等待持久化暂停屏障，不消耗预算或调用供应商。 */
   /** 控制面接管供应商错误重试；返回固定错误码，不把原响应存入审计。 */
   modelFailure?: (request:{conversationId:number;code:string;retryable:boolean})=>void;
@@ -85,8 +89,10 @@ export async function openRuntime(
       const requestOptions = args[2] as {sessionId?:string;signal?:AbortSignal} | undefined;
       const conversationId = requestOptions?.sessionId ? providerConversations.get(requestOptions.sessionId) : undefined;
       if (conversationId === undefined) throw new Error("模型请求缺少已知会话，拒绝预算旁路");
+      let reservationId: string | undefined;
       const invoke = () => {
         const admitted = options.modelAdmission?.({method:String(key),model:args[0],context:args[1],options:args[2],conversationId});
+        reservationId = admitted?.reservationId;
         if (admitted?.maxTokens !== undefined) {
           if (!Number.isSafeInteger(admitted.maxTokens) || admitted.maxTokens < 1) throw new Error("模型输出预算无效");
           args[2] = {...(args[2] as object ?? {}),maxTokens:admitted.maxTokens};
@@ -94,6 +100,7 @@ export async function openRuntime(
         return value.apply(target,args);
       };
       const complete = (message:any) => {
+        options.modelSettled?.({conversationId,reservationId,message});
         if (options.modelFailure && message?.stopReason === "error" && !requestOptions?.signal?.aborted) {
           const error = String(message.errorMessage ?? "");
           const code = /\b429\b/.test(error) ? "MODEL_RATE_LIMITED" : /\b5\d\d\b/.test(error) ? "MODEL_SERVER_ERROR" : /timeout|timed out/i.test(error) ? "MODEL_TIMEOUT" : "MODEL_ERROR";
@@ -180,9 +187,9 @@ export async function openRuntime(
               ?.memory ?? [],
           ),
         ),
-        section("skills", () =>
+        section("skills", input =>
           JSON.stringify(
-            skills.filter(s=>!disabledSkills.has(s.name)).map(({ name, description }) => ({ name, description })),
+            [...skills.filter(s=>!disabledSkills.has(s.name)).map(({ name, description }) => ({ name, description })), ...(options.reviewedSkills?.(input.conversationId) ?? [])],
           ),
         ),
       ],
@@ -197,6 +204,16 @@ export async function openRuntime(
         }),
       ],
       tools: [
+        ...(options.mailConnections ? [defineTool({
+          name: 'gmail_connections', description: '列出当前任务有权使用的 Gmail 连接及仅发送权限状态，不返回 OAuth 凭据。账号标签由Owner确认，不等于Google核验的邮箱身份。', parameters: obj({}),
+          execute: async (_args, api) => result(await options.mailConnections!(api.conversationId)),
+        })] : []),
+        ...(options.mailProposal ? [defineTool({
+          name: 'gmail_send_email',
+          description: '为已连接账号提出本地邮件草稿，不发送邮件。返回意图和审批状态；实际发信须经Owner确切审批或已明确预授权的规则。',
+          parameters: obj({ connectionId: str(), to: arr(str()), cc: opt(arr(str())), bcc: opt(arr(str())), subject: str(), plainText: str(), html: opt(str()), templateId: opt(str()), attachments: opt(arr(obj({ artifactId: str(), filename: str() }))) }),
+          execute: async (args, api) => result(await options.mailProposal!(api.conversationId, args)),
+        })] : []),
         defineTool({
           name: "web_search",
           description:

@@ -1,0 +1,5 @@
+{
+  "gateway": { "auth": { "token": "config-secret-token-should-not-appear" } },
+  "agents": { "defaults": { "workspace": "/home/example/.openclaw/workspace" } },
+  "channels": { "telegram": { "botToken": "telegram-token-should-not-appear" } }
+}

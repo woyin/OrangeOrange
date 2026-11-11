@@ -48,7 +48,7 @@ export class PiAdapter {
   }
   async health():Promise<any> { return this.dispatch("status"); }
   async tools():Promise<any[]> {
-    return this.runtime.toolDescriptors.map(tool=>({name:tool.name,version:"1",description:tool.description,inputSchema:tool.parameters,sideEffect:/^(memory_save|memory_delete|schedule_|reminder_)/.test(tool.name)?"idempotent_write":"read_only",permissions:[tool.name],timeoutMs:60000,idempotent:true,executor:"in-process"}));
+    return this.runtime.toolDescriptors.map(tool=>({name:tool.name,version:"1",description:tool.description,inputSchema:tool.parameters,sideEffect:/^(memory_save|memory_delete|schedule_|reminder_|gmail_send_email$)/.test(tool.name)?"idempotent_write":"read_only",permissions:[tool.name],timeoutMs:60000,idempotent:true,executor:"in-process"}));
   }
   /** 真正的 SDK view observer；回调只同步记录，不得重入 adapter。 */
   async observe(conversationId:number, listener:(event:any)=>void):Promise<{value:unknown;detach:()=>void}> {

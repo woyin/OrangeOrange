@@ -1,9 +1,15 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { randomUUID, timingSafeEqual, createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { resolve, extname, sep } from 'node:path';
 import { ControlService, ApiError, fields, string, type RecordData, type ServiceOptions } from './service.js';
 import { hash } from './store.js';
+import { ArtifactError, decodeBase64 } from './artifacts.js';
+import { compatibilityMatrix } from '../migrations/index.js';
+import { MigrationSourceError } from '../migrations/source.js';
+import { MigrationImportError } from '../migrations/importers.js';
+import { AppError } from './apps.js';
+import { OAuthError, MimeError } from '../connectors/index.js';
 export interface ServerOptions extends ServiceOptions {
     host?: string;
     port?: number;
@@ -13,15 +19,15 @@ export interface ServerOptions extends ServiceOptions {
 }
 const equal = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 export async function startControlServer(options: ServerOptions) {
-    const service = await ControlService.open(options);
+    const service = await ControlService.open({ ...options, oauthRedirectUris: options.oauthRedirectUris ?? (options.publicOrigin ? [new URL('/api/v1/oauth/google/callback', options.publicOrigin).href] : []) });
     const streams = new Set<ServerResponse>();
     const inflight = new Map<string, Promise<any>>();
     const server = createServer((req, res) => void handle(req, res));
     let base = '';
     const send = (res: ServerResponse, status: number, value: unknown, id: string) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }); res.end(JSON.stringify(status >= 400 ? { error: value, requestId: id } : { data: value, requestId: id })); };
-    async function body(req: IncomingMessage) { let size = 0; const chunks: Buffer[] = []; for await (const chunk of req) {
+    async function body(req: IncomingMessage, maxBytes = 65536) { let size = 0; const chunks: Buffer[] = []; for await (const chunk of req) {
         size += chunk.length;
-        if (size > 65536)
+        if (size > maxBytes)
             throw new ApiError(413, 'BODY_TOO_LARGE');
         chunks.push(chunk);
     } try {
@@ -107,6 +113,13 @@ export async function startControlServer(options: ServerOptions) {
                 send(res, 200, { username: b.username, csrf: login.csrf }, requestId);
                 return;
             }
+            if (route === 'oauth/google/callback' && method === 'GET') {
+                rate(req, path);
+                res.setHeader('Referrer-Policy', 'no-referrer');
+                if (url.searchParams.has('error')) await service.externalOperation(() => service.apps.cancelAuthorization(string(url.searchParams.get('state'), 512)));
+                else await service.externalOperation(() => service.apps.complete(string(url.searchParams.get('state'), 512), string(url.searchParams.get('code'), 4096)));
+                res.writeHead(303, { Location: '/', 'Cache-Control': 'no-store' }); res.end(); return;
+            }
             const session = service.auth.authenticate(token(req));
             if (!session)
                 throw new ApiError(401, 'AUTH_REQUIRED');
@@ -140,12 +153,133 @@ export async function startControlServer(options: ServerOptions) {
                 req.on('close', () => { clearInterval(interval); streams.delete(res); });
                 return;
             }
-            const b = write ? await body(req) : {};
+            const b = write ? await body(req, route === 'artifacts' ? 12 * 1024 * 1024 : route === 'migrations' ? 24 * 1024 * 1024 : 65536) : {};
             if (write && route !== 'auth/logout' && route !== 'auth/password')
                 service.requireWrite();
             const action = async () => {
                 const p = route.split('/');
                 const [resource, id, sub] = p;
+                if (resource === 'migrations') {
+                    if (id === 'compatibility' && method === 'GET') return { items: compatibilityMatrix, nextCursor: null };
+                    if (id === 'history') {
+                        if (!sub && method === 'GET') return { items: service.migrations.engine.listHistory(url.searchParams.get('search') ?? ''), nextCursor: null };
+                        if (sub && p[3] === 'continue' && method === 'POST') {
+                            fields(b, ['name', 'messageLimit']);
+                            const background = service.migrations.engine.continuation(sub, b.messageLimit ?? 10);
+                            const c = await service.conversation({ name: b.name ? string(b.name, 100) : '从迁移历史继续' });
+                            const next = { ...c, continuedFromImportedConversationId: sub, importedBackground: JSON.stringify(background).slice(0, 8000) };
+                            service.store.put('conversations', c.id, next, 'owner'); return next;
+                        }
+                        if (sub && method === 'GET') {
+                            const history = service.migrations.engine.listHistory().find(h => h.id === sub); if (!history) throw new ApiError(404, 'MIGRATION_HISTORY_NOT_FOUND'); return history;
+                        }
+                    }
+                    if (id === 'objects' && sub && p[3] === 'memory' && method === 'POST') {
+                        fields(b, ['approved', 'scope', 'content']);
+                        service.memoryPolicy.assertOwnerWrite({ principalId: 'owner', scope: string(b.scope, 200), content: string(b.content, 10000), kind: 'semantic', source: 'migration-review' }, b.approved === true);
+                        return service.migrations.engine.promoteMemory(sub, { approved: b.approved, scope: string(b.scope, 200), content: string(b.content, 10000) });
+                    }
+                    if (id === 'objects' && sub && p[3] === 'draft' && method === 'POST') {
+                        fields(b, ['toolMap', 'requiredTools']); if (b.requiredTools !== undefined && (!Array.isArray(b.requiredTools) || b.requiredTools.some((t: unknown) => typeof t !== 'string'))) throw new ApiError(400, 'INVALID_REQUIRED_TOOLS'); return service.migrations.engine.nativeDraft(sub, { toolMap: b.toolMap, requiredTools: b.requiredTools });
+                    }
+                    if (id === 'objects' && sub && p[3] === 'review' && method === 'POST') return service.externalOperation(() => service.reviewMigrationObject(sub, b));
+                    if (id === 'objects' && sub && p[3] === 'activate' && method === 'POST') { fields(b, ['confirm']); if (b.confirm !== true) throw new ApiError(400, 'CONFIRMATION_REQUIRED'); return service.activateMigrationObject(sub); }
+                    if (!id && method === 'GET') return { items: service.migrations.list(), nextCursor: null };
+                    if (!id && method === 'POST') {
+                        fields(b, ['system', 'instanceId', 'archiveBase64', 'sha256', 'directory', 'workspace']);
+                        const instanceId = string(b.instanceId, 200);
+                        if (!['openclaw', 'hermes'].includes(b.system)) throw new ApiError(400, 'MIGRATION_INVALID_SYSTEM');
+                        if (b.archiveBase64 !== undefined) {
+                            if (b.directory !== undefined || b.workspace !== undefined) throw new ApiError(400, 'INVALID_MIGRATION_SOURCE');
+                            const archive = decodeBase64(b.archiveBase64, 16 * 1024 * 1024);
+                            if (createHash('sha256').update(archive).digest('hex') !== b.sha256) throw new ApiError(409, 'MIGRATION_SOURCE_HASH_MISMATCH');
+                            return service.externalOperation(() => service.migrations.scan({ system: b.system, instanceId, archive }));
+                        }
+                        return service.externalOperation(() => service.migrations.scan({ system: b.system, instanceId, directory: string(b.directory, 4096), ...(b.workspace ? { workspace: string(b.workspace, 4096) } : {}) }));
+                    }
+                    if (id && sub === 'plan' && method === 'POST') { fields(b, ['choices']); return service.migrations.plan(id, b.choices); }
+                    if (id && ['apply', 'rollback'].includes(sub!) && method === 'POST') {
+                        fields(b, sub === 'apply' ? ['planHash', 'password', 'confirm'] : ['password', 'confirm']);
+                        if (b.confirm !== true || !service.auth.verifyPassword(session.userId, string(b.password, 1024))) throw new ApiError(403, 'REAUTH_REQUIRED');
+                        return sub === 'apply' ? service.migrations.apply(id, string(b.planHash, 64)) : service.migrations.rollback(id);
+                    }
+                    if (id && !sub && method === 'GET') return service.migrations.get(id);
+                }
+                if (resource === 'app-connections') {
+                    if (!id && method === 'GET') return { items: service.apps.list(), nextCursor: null };
+                    if (!id && method === 'POST') {
+                        fields(b, ['provider', 'label', 'account', 'accountConfirmed', 'clientId', 'clientSecret', 'redirectUri']);
+                        return service.apps.create(b as any);
+                    }
+                    if (id && sub === 'oauth' && p[3] === 'start' && method === 'POST') {
+                        fields(b, []); return service.externalOperation(() => service.apps.start(id));
+                    }
+                    if (id && sub === 'test' && method === 'POST') {
+                        fields(b, []); return service.externalOperation(() => service.apps.test(id));
+                    }
+                    if (id && method === 'DELETE') {
+                        fields(b, ['password', 'confirm']);
+                        if (b.confirm !== true || !service.auth.verifyPassword(session.userId, string(b.password, 1024))) throw new ApiError(403, 'REAUTH_REQUIRED');
+                        return service.externalOperation(() => service.apps.revoke(id));
+                    }
+                }
+                if (resource === 'action-intents') {
+                    if (!id && method === 'GET') return { items: service.apps.intents(), nextCursor: null };
+                    if (!id && method === 'POST') {
+                        fields(b, ['connectionId', 'action', 'input', 'taskId', 'templateId']);
+                        return service.proposeWebMail(b);
+                    }
+                    if (id && sub === 'decision' && method === 'GET') return service.apps.preview(id);
+                    if (id && sub === 'decision' && method === 'POST') {
+                        fields(b, ['decision', 'inputHash']);
+                        if (service.apps.preview(id).intent.inputHash !== b.inputHash) throw new ApiError(409, 'OPERATION_HASH_CONFLICT');
+                        if (b.decision === 'APPROVED') return service.apps.approve(id, string(b.inputHash, 64));
+                        if (b.decision === 'REJECTED') return service.cancelMailIntent(id);
+                        throw new ApiError(400, 'INVALID_DECISION');
+                    }
+                    if (id && sub === 'send' && method === 'POST') {
+                        fields(b, ['inputHash']);
+                        return service.externalOperation(() => service.sendMailIntent(id, string(b.inputHash, 64)));
+                    }
+                    if (id && sub === 'cancel' && method === 'POST') { fields(b, []); return service.cancelMailIntent(id); }
+                    if (id && sub === 'dry-run' && method === 'POST') { fields(b, []); return service.apps.dryRun(id); }
+                }
+                if (resource === 'app-rules') {
+                    if (!id && method === 'GET') return { items: service.apps.rules(), nextCursor: null };
+                    if (!id && method === 'POST') {
+                        fields(b, ['connectionId', 'profileId', 'workflowId', 'templateId', 'templateHash', 'recipients', 'domains', 'minIntervalMs', 'dailyLimit', 'expiresAt', 'forbiddenTypes', 'enabled']);
+                        return service.apps.rule(b as any);
+                    }
+                    if (id && method === 'PATCH') {
+                        fields(b, ['enabled']); if (typeof b.enabled !== 'boolean') throw new ApiError(400, 'INVALID_INPUT');
+                        const prior = service.apps.rules().find(r => r.id === id); if (!prior) throw new ApiError(404, 'NOT_FOUND');
+                        return service.apps.rule({ ...prior, enabled: b.enabled }, id);
+                    }
+                }
+                if (resource === 'app-grants' && method === 'GET') return { items: service.apps.grants(), nextCursor: null };
+                if (resource === 'app-grants' && id && method === 'PATCH') { fields(b, ['enabled']); if (typeof b.enabled !== 'boolean') throw new ApiError(400, 'INVALID_INPUT'); return service.apps.setGrantEnabled(id, b.enabled); }
+                if (resource === 'app-grants' && method === 'POST') {
+                    fields(b, ['connectionId', 'principalId', 'profileId', 'taskId', 'workflowId', 'enabled']);
+                    if (b.taskId === '*') {
+                        const principal = service.get('principals', string(b.principalId, 200));
+                        if (!principal.allowed || b.profileId !== b.principalId || !string(b.workflowId, 200)) throw new ApiError(403, 'PRINCIPAL_PERMISSION_DENIED');
+                    } else {
+                        const task = service.get('tasks', string(b.taskId, 200));
+                        if (task.principalId !== b.principalId) throw new ApiError(403, 'TASK_PRINCIPAL_MISMATCH');
+                    }
+                    return service.apps.grant(b as any);
+                }
+                if (resource === 'artifacts') {
+                    if (!id && method === 'POST') {
+                        fields(b, ['filename', 'mimeType', 'base64', 'sha256']);
+                        return service.artifacts.put(b as any);
+                    }
+                    if (!id && method === 'GET') return { items: service.artifacts.list(), nextCursor: null };
+                    if (id && method === 'GET') {
+                        const { bytes, ...metadata } = service.artifacts.read(id);
+                        return metadata;
+                    }
+                }
                 if (route === 'auth/logout' && method === 'POST') {
                     service.auth.logout(token(req));
                     cookie(res, '', req, true);
@@ -163,10 +297,15 @@ export async function startControlServer(options: ServerOptions) {
                     if (method === 'GET')
                         return service.store.setting('config', {});
                     if (method === 'PATCH') {
-                        fields(b, ['timezone', 'language', 'notifications', 'dailyBudget', 'taskBudget', 'retentionDays', 'systemPrompt', 'tokenBudget']);
+                        fields(b, ['timezone', 'language', 'notifications', 'dailyBudget', 'taskBudget', 'retentionDays', 'systemPrompt', 'tokenBudget', 'maxConcurrentRuns', 'maxQueueLength', 'gmailBodyRetentionDays', 'artifactRetentionDays', 'auditSnapshotRetentionDays', 'softDailyBudget', 'softTaskBudget']);
+                        for (const key of ['artifactRetentionDays', 'auditSnapshotRetentionDays']) if (b[key] !== undefined && (!Number.isInteger(b[key]) || b[key] < 1 || b[key] > 3650)) throw new ApiError(400, 'INVALID_SETTING');
+                        if (b.gmailBodyRetentionDays !== undefined && (!Number.isInteger(b.gmailBodyRetentionDays) || b.gmailBodyRetentionDays < 0 || b.gmailBodyRetentionDays > 365)) throw new ApiError(400, 'INVALID_SETTING');
+                        for (const [key, cap] of [['maxConcurrentRuns', 2], ['maxQueueLength', 100]] as const)
+                            if (b[key] !== undefined && (!Number.isInteger(b[key]) || b[key] < 1 || b[key] > cap))
+                                throw new ApiError(400, 'INVALID_SETTING');
                         if (b.timezone)
                             new Intl.DateTimeFormat('en', { timeZone: b.timezone });
-                        for (const key of ['dailyBudget', 'taskBudget', 'retentionDays', 'tokenBudget'])
+                        for (const key of ['dailyBudget', 'taskBudget', 'retentionDays', 'tokenBudget', 'softDailyBudget', 'softTaskBudget'])
                             if (b[key] !== undefined && (typeof b[key] !== 'number' || b[key] < 0 || !Number.isFinite(b[key])))
                                 throw new ApiError(400, 'INVALID_SETTING');
                         if (b.retentionDays !== undefined && (!Number.isInteger(b.retentionDays) || b.retentionDays < 1 || b.retentionDays > 3650))
@@ -225,7 +364,7 @@ export async function startControlServer(options: ServerOptions) {
                         return service.taskAction(id, string(b.action, 30));
                     }
                     if (method === 'GET')
-                        return { ...service.get('tasks', id), steps: service.list('task_steps').filter(s => s.taskId === id), operations: service.list('operations').filter(s => s.taskId === id), deliveries: service.list('outbox').filter(s => s.taskId === id) };
+                        return { ...service.get('tasks', id), actionIntents: service.list('gmail_intents').filter(i => i.taskId === id), steps: service.list('task_steps').filter(s => s.taskId === id), operations: service.list('operations').filter(s => s.taskId === id), deliveries: service.list('outbox').filter(s => s.taskId === id) };
                 }
                 if (resource === 'schedules') {
                     if (id === 'preview' && method === 'GET')
@@ -249,6 +388,18 @@ export async function startControlServer(options: ServerOptions) {
                 }
                 if (resource === 'heartbeats' && ['POST', 'PATCH'].includes(method))
                     return service.heartbeat(b, id);
+                if (resource === 'memory-policy') {
+                    if (method === 'GET') return service.store.get('memory_policy_blocked_categories', 'owner') ?? { principalId: 'owner', categories: [] };
+                    if (method === 'PATCH') { fields(b, ['categories']); service.memoryPolicy.setBlockedCategories('owner', b.categories); return { categories: b.categories }; }
+                }
+                if (resource === 'memory-candidates') {
+                    const scope = url.searchParams.get('scope') ?? 'owner';
+                    if (!id && method === 'GET') return { items: service.memoryPolicy.listCandidates('owner', scope), nextCursor: null };
+                    if (id && sub === 'decision' && method === 'POST') {
+                        fields(b, ['scope', 'exactHash', 'decision']);
+                        return service.memoryPolicy.decide({ principalId: 'owner', scope: string(b.scope, 200), id, exactHash: string(b.exactHash, 64), decision: b.decision });
+                    }
+                }
                 if (resource === 'memories') {
                     if (['POST', 'PATCH'].includes(method))
                         return service.memory(b, id);
@@ -306,7 +457,17 @@ export async function startControlServer(options: ServerOptions) {
                     return service.get('tools', id);
                 }
                 if (resource === 'skills') {
-                    const skills:RecordData[] = await service.adapter.dispatch('skill.list');
+                    const skills:RecordData[] = [...await service.adapter.dispatch('skill.list'), ...service.list('reviewed_imported_skills')];
+                    const imported = id ? service.store.get<RecordData>('reviewed_imported_skills', id) : undefined;
+                    if (imported && method === 'GET') return imported;
+                    if (imported && method === 'PATCH') {
+                        fields(b, ['enabled']); if (typeof b.enabled !== 'boolean') throw new ApiError(400, 'INVALID_INPUT');
+                        if (b.enabled) return service.activateMigrationObject(imported.sourceObjectId);
+                        const value = { ...imported, enabled: false };
+                        service.store.transaction(() => { service.store.put('reviewed_imported_skills', id!, value, 'owner'); service.store.put('skill_settings', id!, { id, enabled: false }); const promotion = service.get('migration_native_promotions', imported.sourceObjectId); service.store.put('migration_native_promotions', promotion.id, { ...promotion, hash: hash(value) }); });
+                        return value;
+                    }
+
                     if(id&&!skills.some(s=>s.name===id))throw new ApiError(404,'NOT_FOUND');
                     if(id&&method==='PATCH'){fields(b,['enabled']);if(typeof b.enabled!=='boolean')throw new ApiError(400,'INVALID_INPUT');await service.adapter.dispatch('skill.toggle',{name:id,enabled:b.enabled});service.store.put('skill_settings',id,{id,enabled:b.enabled});return {id,name:id,enabled:b.enabled};}
                     if(id&&method==='GET')return {name:id,...await service.adapter.dispatch('skill.load',{name:id}),enabled:service.store.get<RecordData>('skill_settings',id)?.enabled!==false};
@@ -386,7 +547,8 @@ export async function startControlServer(options: ServerOptions) {
             send(res, 200, result, requestId);
         }
         catch (e) {
-            const error = e instanceof ApiError ? e : new ApiError(400, 'REQUEST_FAILED');
+            const domainCode = e instanceof AppError || e instanceof OAuthError || e instanceof MimeError || e instanceof ArtifactError || e instanceof MigrationSourceError || e instanceof MigrationImportError ? e.code : e instanceof Error && /^[A-Z][A-Z0-9_]{2,70}$/.test(e.message) ? e.message : undefined;
+            const error = e instanceof ApiError ? e : e instanceof ArtifactError ? new ApiError(e.code === 'ARTIFACT_NOT_FOUND' ? 404 : 400, e.code) : domainCode ? new ApiError(/NOT_FOUND/.test(domainCode) ? 404 : /UNCERTAIN|CONFLICT|HASH_MISMATCH|APPROVAL_INVALID/.test(domainCode) ? 409 : /OWNER_REQUIRED|PERMISSION_DENIED|SCOPE_NOT_ALLOWED/.test(domainCode) ? 403 : 400, domainCode) : new ApiError(400, 'REQUEST_FAILED');
             if (!res.headersSent)
                 send(res, error.status, { code: error.code, message: error.message }, requestId);
             else

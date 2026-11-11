@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "jobs": [
+    {
+      "id": "job-1",
+      "name": "Daily digest",
+      "enabled": true,
+      "schedule": { "kind": "cron", "expr": "0 9 * * *" },
+      "prompt": "Summarize inbox. api_key=supersecretvalue123",
+      "delivery": { "channel": "telegram", "token": "delivery-token-should-not-appear" }
+    }
+  ]
+}

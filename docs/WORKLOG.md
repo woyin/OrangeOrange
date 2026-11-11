@@ -53,3 +53,19 @@ HTTP现已实际接入OperationsService，含活动模型/等待审批备份、�
 容器构建遇到npm ci长时间无进展，补用镜像内Node头文件和有限网络重试；probe必须携带OpenAPI以运行匿名接口矩阵，已补COPY。AMD64 Node探针通过，但本地legacy builder在跨架构COPY阶段失败。ARM64最终构建/smoke证据随后补记，不把旧镜像结果当作当前源码验收。没有修改用户Docker凭据配置，公开镜像探针使用独立临时匿名配置。
 
 ARM64最终容器证据：生产镜像sha256:e77e1a9a7528bf51615e2396ded64822866dbcaf07193d4a98d287687d0680be构建成功；deploy/smoke.mjs验证全新容器/空卷恢复、Owner登录、会话/Memory、旧session撤销、初始化后重启持久性及非root/read-only/cap-drop。随后原生Linux ARM64 probe在1GiB/2CPU受限容器内30文件135测试通过（26.11s）。测试脚本先复现Docker随机端口重启后改变，修正为重读inspect；全新卷fixture使用node身份写入，未增加capabilities。AMD64仅基础Node探针通过，legacy构建器跨架构失败；真实OpenWrt、外部模型/Telegram、完整72小时仍未验收。
+
+## v1.1 开发进度（本轮未完成）
+
+按 `docs/Home_Durable_Agent_v1.1` 实施。主流程重新验证 M0 四文件22测试通过后，GPT6.1 Terra并行迁移、Gmail、ExecutionBackend，主流程接HTTP/Pi/UI/备份/生命周期；尚未完成最终需求逐项验收。
+
+已接线代码：迁移ZIP/显式ro目录→服务端清单/哈希计划→再认证apply/rollback；只读历史搜索、从历史新建原生Pi会话及不可信背景注入；Memory审查/原生FTS；Skill/Cron审查产生禁用原生草案，单独activate，注册工具映射检查；迁移投影回滚保护修改冲突。Source脚本不执行，oauth/IM凭据不迁入。
+
+Gmail：最小gmail.send，PKCE/state单用，无Cookie回调依靠state；client配置secret与多client绑定/重绑撤销/过期PKCE清除，revoke先本地撤销且跨实例refresh迟到不能复活；Owner显式确认发件地址，UI/metadata标注accountVerifiedByProvider=false（严格gmail.send不能查身份，需ADR界定，不暗加scope）。受管附件8MiB、类型/hash/路径验证、总100MiB；邮件payload加密、hash审批、发送DISPATCHING/CONFIRMED/SEND_UNCERTAIN防重放。Webhook/UI/OAuth的scope和code/token不进入事件；终态正文默认立即清除，可配置0–365天。真实Web邮件task关联和取消、自动规则调度、授权grant稳定ID/撤销与Telegram工具权限贯通已接；需继续端到端验证。
+
+ExecutionBackend真实只读tool路径已接，任务/主体/租户/短期grant/Policy守卫，原有预算/暂停/审批仍保留。独立浏览器和Bot为P1，不把FakeBackend当真实Worker。
+
+当前实测证据：新邮件HTTP6项通过，迁移HTTP3项通过；browser v11.spec桌面/手机4项及v11-flows桌面/手机4项通过；旧console最初依赖工具首项致2项失败，修正按web_search标识后4项通过。完整test:all该次后端/构建/类型均通过，browser10通过2失败，不能记录为完整门禁通过；后续代码变化后需最终重跑。旧文档证据不可套用当前镜像。
+
+P0差距审查发现并继续处理：MEM禁记/敏感候选/去重冲突（独立模块开发中）；提供商预算实际执行及软上限/已知usage结算（模块开发中）；审计增量快照生产接入和附件引用保留（维护模块开发中）。WEB Memory修订API和UI已在App.vue有真实接入，审查报告的静态缺失不准确，需浏览器编辑/修订补验证。notifications开关已定义为自动化主动通知开关（显式IM回复不受影响），待发送自动化消息暂停/重开/恢复3项配置回归通过。
+
+正式发布仍缺：真实Gmail明确授权发送（本轮仅开发授权不代表发信授权）、真实来源备份验收、实际OpenWrt、AMD64当前应用镜像、72小时真实运行。原生ARM64旧镜像通过不证明新源码。P0仍未完成，不调用goal_complete。当前目标ID 34a7cf2a-d10f-45f0-bd2a-fc56e6a27d77。

@@ -1,0 +1,7 @@
+# Hermes config fixture; 值不得进入迁移清单。
+model: glm-4.6
+providers:
+  openai:
+    api_key: config-yaml-secret-should-not-appear
+memory:
+  enabled: true
