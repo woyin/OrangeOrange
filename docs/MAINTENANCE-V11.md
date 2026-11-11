@@ -10,6 +10,8 @@
 
 ## Main 接线
 
-在现有 `ControlService.cleanup()` 的小时维护流程中调用 `this.maintenance.maintainAudit(now)`，并沿用该流程的错误报告；不要自动重试磁盘满。还需在设置入口接受并校验 `artifactRetentionDays` 和 `auditSnapshotRetentionDays`，均为 1–3650 的整数，并写入 `config`。这些入口不在本次允许修改的文件范围内，因此尚未接线。
+`ControlService.cleanup()` 已在小时维护流程中调用 `retention(now)`、`maintainAudit(now)` 和邮件正文清理。`PATCH /api/v1/settings` 已接受并校验 `artifactRetentionDays` 和 `auditSnapshotRetentionDays`，均为 1–3650 的整数，并写入 `config`；Web「设置」也提供这两个字段。保存后可重新读取设置确认数值。磁盘满时检查错误和可用空间，不要循环重试。
 
-现有 `retention()` 对历史任务、事件和引用仍使用全量扫描；本次只对审计快照批次和快照目录检查设定上限。若要求整个维护周期严格有界，需要另行改造历史清理和引用扫描，不能把当前接口称为全流程有界。
+现有 `retention()` 对历史任务、事件和引用仍使用全量扫描；目前只对审计快照批次和快照目录检查设定上限。若要求整个维护周期严格有界，需要另行改造历史清理和引用扫描，不能把当前接口称为全流程有界。
+
+条件：开发环境已安装依赖。运行 `npx vitest run tests/control-maintenance.test.ts`，以退出码和测试结果验证维护行为；它不能代替目标设备的长期运行验收。

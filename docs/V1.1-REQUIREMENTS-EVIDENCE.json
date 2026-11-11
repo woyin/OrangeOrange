@@ -1,0 +1,2479 @@
+{
+  "baseline": "docs/Home_Durable_Agent_v1.1/SRS.md",
+  "counts": {
+    "total": 208,
+    "P0": 141,
+    "P1": 58,
+    "P2": 9
+  },
+  "method": "逐项静态审计与独立运行证据分开；postAuditChange仅覆盖所述修复，不抹除同条其他限制。",
+  "requirements": [
+    {
+      "id": "SYS-001",
+      "priority": "P0",
+      "requirement": "使用 docker compose up -d 完成安装或升级，不要求在 OpenWrt 原生安装 Node/Python 运行环境",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "Compose 安装/升级，不需宿主 Node/Python",
+          "部分",
+          "`deploy/Dockerfile`、`deploy/compose.yml`、`scripts/smoke-install.mjs`，`README.md`",
+          "本次未运行最新镜像安装、持久数据升级和回滚；需实际容器验证。"
+        ]
+      }
+    },
+    {
+      "id": "SYS-002",
+      "priority": "P0",
+      "requirement": "首次启动进入 /setup 初始化向导：管理员凭据、时区、模型提供商、Telegram（可跳过）、数据目录检测",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "首启向导：管理员、时区、模型、可跳过 Telegram、数据目录检测",
+          "部分",
+          "`server` setup，`apps/web/src/App.vue` 登录表单；`browser/console.spec.ts` 首次配置",
+          "未见数据目录检测；setup 先提交管理员，再配置 provider/channel，后者失败可能留下已初始化状态。Main 正在修复，须复核并测失败恢复。"
+        ]
+      },
+      "postAuditChange": {
+        "evidence": "tests/control-setup-atomic.test.ts",
+        "description": "初始化写入事务化，失败可重试；数据目录可用性由启动/ready检查，向导专用检测展示仍有限。",
+        "verification": "见docs/acceptance-results.json最终命令记录，文件存在不是通过证明"
+      }
+    },
+    {
+      "id": "SYS-003",
+      "priority": "P0",
+      "requirement": "启动时执行数据库版本检查和可回滚迁移；失败进入只读维护模式，拒绝执行任务",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "数据库版本检查、可回滚迁移，失败只读且拒绝任务",
+          "部分",
+          "`store` 检查 `user_version`、事务回滚、`query_only`；`service.requireWrite`",
+          "目前 schema 仅版本 1，无实际跨版本升级及回滚验证；其他初始化失败可能直接退出，不能一概视为只读维护。"
+        ]
+      }
+    },
+    {
+      "id": "SYS-004",
+      "priority": "P0",
+      "requirement": "启动时调用 Pi Durable 恢复入口，重建应用层未完成任务索引并处理 outbox",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "Pi Durable 恢复入口、重建任务索引和处理 outbox",
+          "部分",
+          "`src/runtime.ts` 的 `harness.resume()`；`service.reconcile`；`control-api.test.ts` 稳定 requestId 重开、发送不确定恢复",
+          "有恢复路径；未见覆盖所有中断点和真实平台确认的完整验收。"
+        ]
+      }
+    },
+    {
+      "id": "SYS-005",
+      "priority": "P0",
+      "requirement": "/health/live 与 /health/ready 分离；ready 校验数据库、适配器、调度器基础状态",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "live/ready 分离，ready 检查数据库、适配器、调度器",
+          "部分",
+          "`server` 健康端点、`service.ready`；工作区新增 `control-health.test.ts` 针对数据库故障",
+          "实现及测试正在并行修改；本次未运行，须确认最终状态下适配器和调度器异常也能使 ready 失败。"
+        ]
+      },
+      "postAuditChange": {
+        "evidence": "tests/control-health.test.ts",
+        "description": "数据库真实查询及适配器/调度器/服务状态决定ready，live独立。",
+        "verification": "见docs/acceptance-results.json最终命令记录，文件存在不是通过证明"
+      }
+    },
+    {
+      "id": "SYS-006",
+      "priority": "P0",
+      "requirement": "提供 config export（不含密钥）与健康诊断包（默认脱敏）",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "无密钥配置导出及默认脱敏诊断包",
+          "已实现",
+          "`control/maintenance.ts` 的 `exportConfig`/`diagnostics`；`control-maintenance-http.test.ts` 检查认证与脱敏",
+          "测试未在本次运行；脱敏覆盖依赖已知字段和模式。"
+        ]
+      }
+    },
+    {
+      "id": "SYS-007",
+      "priority": "P1",
+      "requirement": "在 UI 显示当前版本、Git SHA、Pi Durable 版本、schema 版本、依赖安全公告状态",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "GW-001",
+      "priority": "P0",
+      "requirement": "Gateway 使用 ChannelAdapter 接口：connect/health/normalizeInbound/send/edit/stop",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "ChannelAdapter 的 connect/health/normalizeInbound/send/edit/stop",
+          "部分",
+          "`src/channels/types.ts` 定义 `Adapter` 的 poll/send；`channel-adapters.test.ts`",
+          "现有接口没有规定的 connect、health、normalizeInbound、edit、stop 契约。"
+        ]
+      },
+      "postAuditChange": {
+        "evidence": "tests/channel-contract.test.ts",
+        "description": "Telegram生产适配器实现connect/health/normalizeInbound/send/edit/stop；其他legacy通道未宣称全部迁移。",
+        "verification": "见docs/acceptance-results.json最终命令记录，文件存在不是通过证明"
+      }
+    },
+    {
+      "id": "GW-002",
+      "priority": "P0",
+      "requirement": "Telegram 支持消息接收、基本文本输出、分段长文本、引用/线程关联、错误重试",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "Telegram 接收、文本分段、引用/线程、错误重试",
+          "部分",
+          "`channels/telegram.ts`、`service` outbox；`channel-adapters.test.ts` 私聊文本与错误分类，`control-api.test.ts` 响应丢失",
+          "当前 adapter 仅接收私聊；未实现群组话题、引用关联。429 有重试，未知发送结果转不确定而不盲重试。"
+        ]
+      },
+      "postAuditChange": {
+        "evidence": "tests/control-telegram-topics.test.ts",
+        "description": "群组话题及引用信息保留并用于回复；真实Telegram仍未验收。",
+        "verification": "见docs/acceptance-results.json最终命令记录，文件存在不是通过证明"
+      }
+    },
+    {
+      "id": "GW-003",
+      "priority": "P0",
+      "requirement": "外部发件人以 platform + tenant/bot + sender_id 唯一识别；默认拒绝未知发件人",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "platform + tenant/bot + sender 唯一识别，未知默认拒绝",
+          "已实现",
+          "`service.inbound` 以 `telegram:${account}:${user}` 构造 principal，检查 `allowedUsers`；`control-api.test.ts` allowlist",
+          "本次只核对 control Telegram 路径；其他 legacy adapter 不等于本路径。"
+        ]
+      }
+    },
+    {
+      "id": "GW-004",
+      "priority": "P0",
+      "requirement": "以 platform + external_event_id 生成入站幂等键；在 DB 去重",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "platform + external_event_id 数据库去重",
+          "已实现",
+          "`service.inbound` 以 `telegram:${account}:${id}` 作为 inbox key；`store` 唯一键；`control-api.test.ts` 十次 update 去重",
+          "测试针对 Telegram；account 一并纳入键。"
+        ]
+      }
+    },
+    {
+      "id": "GW-005",
+      "priority": "P0",
+      "requirement": "维护 thread_id -> conversation_id 的持久化映射，可显式新建/归档会话",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "线程到会话持久映射，可显式新建/归档",
+          "部分",
+          "`service.inbound` 保存 `threadKey`；`server` 会话创建和 archived 状态",
+          "当前 Telegram 只接收私聊，未支持群组话题；未见将同一 IM 线程显式切换到新会话的控制路径。"
+        ]
+      },
+      "postAuditChange": {
+        "evidence": "tests/control-telegram-topics.test.ts",
+        "description": "话题、发送者隔离，出站重查发送者授权；显式同线程新建仍有限。",
+        "verification": "见docs/acceptance-results.json最终命令记录，文件存在不是通过证明"
+      }
+    },
+    {
+      "id": "GW-006",
+      "priority": "P0",
+      "requirement": "出站使用 outbox：写入待发送、发送、确认平台 ID 或进入待重试；保存重试状态",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "outbox 持久待发、发送确认或重试",
+          "已实现",
+          "`service.enqueueOutbox`/`channels`；`control-api.test.ts` 丢失响应后不重发与人工确认路径",
+          "不确定投递需人工核验，不能当作已送达。"
+        ]
+      }
+    },
+    {
+      "id": "GW-007",
+      "priority": "P0",
+      "requirement": "每个通道设置节流、消息大小限制、附件白名单与最大尺寸",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "每通道节流、消息大小、附件白名单及上限",
+          "部分",
+          "`channels/types.ts` 长度、`service.inbound` 文本限制和 outbox 429 退避；`channel-adapters.test.ts` 429",
+          "未见每通道完整主动节流配置、附件类型白名单及尺寸限制；Telegram control 入站目前仅文本。"
+        ]
+      }
+    },
+    {
+      "id": "GW-008",
+      "priority": "P0",
+      "requirement": "平台不支持的功能优雅降级为文本，例如审批使用带短期有效期的 Web 链接",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "平台不支持功能降级文本，如短期审批链接",
+          "未实现",
+          "`service` 文本出站与 `policy` 审批；未见关联测试",
+          "未找到通道审批通知、短期 Web 链接或能力降级实现。"
+        ]
+      },
+      "postAuditChange": {
+        "evidence": "tests/control-approval-notification.test.ts",
+        "description": "IM审批降级为带到期时间的文本，仍须登录管理台批准，不提供免登录授权。",
+        "verification": "见docs/acceptance-results.json最终命令记录，文件存在不是通过证明"
+      }
+    },
+    {
+      "id": "GW-009",
+      "priority": "P1",
+      "requirement": "增加第二连接器（推荐飞书或 Discord，由使用场景选择）",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "GW-010",
+      "priority": "P1",
+      "requirement": "通道可暂停、重连、验证凭据、查看最近接收/发送错误",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "CHAT-001",
+      "priority": "P0",
+      "requirement": "支持多会话创建、归档、恢复、搜索和更名；不同 IM 线程隔离",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "多会话创建、归档、恢复、搜索、更名，IM 线程隔离",
+          "部分",
+          "`server` 创建/PATCH 会话；`App.vue` 会话列表；`control-api.test.ts` 同会话串行",
+          "私聊按 chat 映射；群组话题隔离缺失。UI 搜索只过滤已加载记录，未见消息全文搜索；线程显式新建见 GW-005。"
+        ]
+      }
+    },
+    {
+      "id": "CHAT-002",
+      "priority": "P0",
+      "requirement": "模型调用、工具步骤、进度、最终答复通过事件流展示",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "模型调用、工具步骤、进度、最终答复事件流",
+          "部分",
+          "`service.observe` 发 `conversation.changed`；`App.vue` 重新读取 live/history，显示工具折叠；`control-api.test.ts` SSE 恢复",
+          "事件仅通知会话变化，未见逐模型调用/工具步骤的完整结构化事件验证。"
+        ]
+      }
+    },
+    {
+      "id": "CHAT-003",
+      "priority": "P0",
+      "requirement": "支持在运行时追加消息：忙碌时按策略入队，不打断不可取消的工具调用",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "忙时追加入队，不打断不可取消工具",
+          "部分",
+          "`service.createTask` 排队、同会话串行；`control-api.test.ts` 同会话串行",
+          "未见真实不可取消工具执行期间追加消息并验证无中断的专门测试。"
+        ]
+      }
+    },
+    {
+      "id": "CHAT-004",
+      "priority": "P0",
+      "requirement": "支持暂停、取消正在运行的工作；取消不等于撤销已执行的外部动作",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "暂停和取消运行，说明不能撤销外部动作",
+          "已实现",
+          "`service.taskAction`；`control-runtime-extended.test.ts` 真实 pause/resume 与 cancel；`App.vue` 操作确认说明",
+          "聊天页自身取消入口问题另见 WEB-003；任务中心提供操作。"
+        ]
+      }
+    },
+    {
+      "id": "CHAT-005",
+      "priority": "P0",
+      "requirement": "提供系统指令/角色描述编辑器，显示 token 预算与版本历史",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "系统指令/角色编辑、token 预算、版本历史",
+          "部分",
+          "`server` 设置 `systemPrompt`、`tokenBudget`、写入 `prompt_revisions`；`App.vue` 设置表单",
+          "未见 UI 展示或比较历史版本；token 预算不是编辑器中的实际 token 计数。"
+        ]
+      },
+      "postAuditChange": {
+        "evidence": "tests/control-delivery-views.test.ts",
+        "description": "增加设置指令历史读取及前端展示；不宣称精确token计数。",
+        "verification": "见docs/acceptance-results.json最终命令记录，文件存在不是通过证明"
+      }
+    },
+    {
+      "id": "CHAT-006",
+      "priority": "P1",
+      "requirement": "上下文压缩、摘要来源和人工纠正入口",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "CHAT-007",
+      "priority": "P2",
+      "requirement": "多 Agent Profile 拥有不同模型、记忆作用域、工具策略和会话",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "TASK-001",
+      "priority": "P0",
+      "requirement": "所有 IM/Cron/Web 入口统一创建含 task_id、来源、所有者、目标、预算、状态的任务",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "IM/Cron/Web 统一创建含 ID、来源、所有者、目标、预算、状态的任务",
+          "已实现",
+          "`service.createTask`；`server` Web、`inbound` Telegram、`automate` Cron 调用；`control-api.test.ts` 任务与 Telegram",
+          "本次未运行三入口端到端验证。"
+        ]
+      }
+    },
+    {
+      "id": "TASK-002",
+      "priority": "P0",
+      "requirement": "Task 与 Pi Durable Conversation/Task 显式建立关联，支持重新打开并恢复",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "Task 与 Pi Durable Conversation/Task 显式关联并恢复",
+          "部分",
+          "`service` 记录 `piConversationId`/`piSubmissionId`；`control-api.test.ts` 跨库重开对账",
+          "有 conversation 和 submission 关联；未见明确持久化 Pi Durable task ID 与独立重开验证。"
+        ]
+      }
+    },
+    {
+      "id": "TASK-003",
+      "priority": "P0",
+      "requirement": "提供有限重试次数、指数退避+抖动、错误分类：可重试/不可重试/需审批",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "有限重试、指数退避抖动、错误分类",
+          "部分",
+          "`service.finishTasks` 针对模型 429/5xx/timeout 最多两次和抖动；`control-runtime-extended.test.ts` 已写入后不重放",
+          "仅覆盖特定模型失败，未建立通用可重试/不可重试/需审批分类及全部路径测试。"
+        ]
+      }
+    },
+    {
+      "id": "TASK-004",
+      "priority": "P0",
+      "requirement": "工具调用按副作用分类：只读、幂等写、非幂等写、高危操作",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "工具只读、幂等写、非幂等写、高危分类",
+          "已实现",
+          "`control/policy.ts` 的 `ToolDescriptor.sideEffect` 和 `PolicyGateway`；`control-policy.test.ts`",
+          "高危默认拒绝；分类是否与每个实际执行器副作用一致需随工具变更复核。"
+        ]
+      }
+    },
+    {
+      "id": "TASK-005",
+      "priority": "P0",
+      "requirement": "非幂等动作记录 operation key、请求、确认结果与不确定状态；不确定时先核验后重试或人工介入",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "非幂等 operation key、请求、确认和不确定核验",
+          "部分",
+          "`service.tool` 持久化 operationHash、状态和 receipt；`control-api.test.ts` 崩溃转 UNCERTAIN；Gmail 意图另存快照",
+          "通用 operation 记录哈希，不保存完整请求快照；不确定后禁止重试，但未见通用核验/人工解决工作流。"
+        ]
+      }
+    },
+    {
+      "id": "TASK-006",
+      "priority": "P0",
+      "requirement": "提供任务取消、暂停、继续、重试、查看失败原因；操作必须有权限校验",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "取消、暂停、继续、重试、失败原因和权限",
+          "部分",
+          "`server` 认证路由和 `service.taskAction`；`control-runtime-extended.test.ts` 暂停、取消",
+          "owner 权限路径存在；未见独立多主体权限矩阵测试，操作错误原因部分归为通用错误。"
+        ]
+      }
+    },
+    {
+      "id": "TASK-007",
+      "priority": "P0",
+      "requirement": "每任务配置最大时长、最多模型轮次、最多工具调用、Token/金额预算",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "每任务最大时长、模型轮次、工具数、token/金额",
+          "已实现",
+          "`service.createTask`、`admitModel`、`tool`、`finishTasks`；`control-runtime-extended.test.ts` 预算和时限",
+          "已有默认值和内部预算字段；边界效果依赖现有测试，未在本次执行。"
+        ]
+      }
+    },
+    {
+      "id": "TASK-008",
+      "priority": "P0",
+      "requirement": "队列有最大长度与同时运行上限；超过容量返回明确拒绝或排队反馈",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "队列长度和运行并发上限，超限反馈",
+          "已实现",
+          "`service.createTask` 的 `QUEUE_FULL` 与调度并发限制；`control-api.test.ts` 队列及并发，`control-settings-v11.test.ts` 配置上下限",
+          "本次未运行测试。"
+        ]
+      }
+    },
+    {
+      "id": "TASK-009",
+      "priority": "P0",
+      "requirement": "Agent 完成不等于交付成功；任务与消息 delivery 使用独立状态",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "Agent 完成和消息 delivery 独立状态",
+          "部分",
+          "`service.finishTasks` 与 outbox 聚合状态；`control-api.test.ts` 不确定投递",
+          "关闭通知或 `onlyOnChange` 抑制结果时先写 PENDING 而不创建 outbox，后续无法更新，状态可能永久待投递。"
+        ]
+      },
+      "postAuditChange": {
+        "evidence": "tests/control-delivery-status.test.ts",
+        "description": "禁用通知与无变化的结果标为无需投递，只有实际入队后才待投递。",
+        "verification": "见docs/acceptance-results.json最终命令记录，文件存在不是通过证明"
+      }
+    },
+    {
+      "id": "TASK-010",
+      "priority": "P1",
+      "requirement": "任务支持结构化里程碑、依赖关系、分支与子任务树",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "TASK-011",
+      "priority": "P1",
+      "requirement": "Supervisor 可检查子任务失败并决定有限次重试、重规划、转人工",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "TASK-012",
+      "priority": "P1",
+      "requirement": "支持用户在等待审批/失败时补充说明并恢复",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "AUTO-001",
+      "priority": "P0",
+      "requirement": "Cron 支持标准 cron 表达式、IANA 时区、预览接下来 5 次运行时间",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "标准 cron、IANA 时区、预览 5 次",
+          "已实现",
+          "`service.preview` 使用 cron-parser 与时区；`control-api.test.ts` preview 5/DST",
+          "本次未运行测试。"
+        ]
+      }
+    },
+    {
+      "id": "AUTO-002",
+      "priority": "P0",
+      "requirement": "调度创建、编辑、暂停、恢复、手动执行、删除、查看历史",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "调度创建、编辑、暂停、恢复、手动执行、删除、历史",
+          "已实现",
+          "`server` schedules CRUD/actions/history；`App.vue` 自动化页面；`control-api.test.ts` 创建调度",
+          "已有代码；未见一项覆盖全部操作和历史的专门测试。"
+        ]
+      }
+    },
+    {
+      "id": "AUTO-003",
+      "priority": "P0",
+      "requirement": "每个 Cron tick 都创建独立 task/run；可选 skip/coalesce/catch-up-one 漏跑策略",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "每 Cron tick 独立 task/run，skip/coalesce/catch-up-one 漏跑策略",
+          "部分",
+          "`service.automate` 以计划时间构造 key，接受三种策略；`control-api.test.ts` queue_one 和 skip",
+          "coalesce 与 catch-up-one 当前走相同行为。清单未定义二者差别，不能仅据此判 bug；需结合规范明确语义，补重启、多次漏跑、各策略测试。"
+        ]
+      }
+    },
+    {
+      "id": "AUTO-004",
+      "priority": "P0",
+      "requirement": "支持任务互斥策略：skip_if_running 或 queue_one，默认 skip_if_running",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "skip_if_running 或 queue_one，默认前者",
+          "已实现",
+          "`service.schedule` 默认策略、`automate` 的 pending；`control-api.test.ts` queue_one 忙时合并",
+          "本次未运行测试；还应覆盖默认策略。"
+        ]
+      }
+    },
+    {
+      "id": "AUTO-005",
+      "priority": "P0",
+      "requirement": "Heartbeat 绑定会话/任务，在会话空闲时按间隔触发，共享上下文，不插入正在进行的模型回合",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "Heartbeat 绑定上下文，空闲触发，不插入模型回合",
+          "已实现",
+          "`service.heartbeat`/`automate` 检查同会话未终结任务；`control-api.test.ts` 忙时合并一次",
+          "本次未运行测试。"
+        ]
+      }
+    },
+    {
+      "id": "AUTO-006",
+      "priority": "P0",
+      "requirement": "任务执行结果可指定通过哪个通道/线程投递，并配置仅变化时通知",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "指定通道/线程投递，仅变化时通知",
+          "部分",
+          "`service` 保存 channelId/threadId 和 `lastResultHash`；`control-settings-v11.test.ts` 关闭通知",
+          "抑制消息时状态永久 PENDING，见 TASK-009；未见只变化时通知的端到端测试。"
+        ]
+      },
+      "postAuditChange": {
+        "evidence": "tests/control-delivery-status.test.ts",
+        "description": "抑制重复通知的任务状态与实际outbox一致。",
+        "verification": "见docs/acceptance-results.json最终命令记录，文件存在不是通过证明"
+      }
+    },
+    {
+      "id": "AUTO-007",
+      "priority": "P1",
+      "requirement": "提供签名 Webhook 入口，支持 HMAC 时间戳、重放窗口、去重、大小限制",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "AUTO-008",
+      "priority": "P1",
+      "requirement": "事件规则采用 source + filter + action + rate_limit，可暂停和模拟测试",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "AUTO-009",
+      "priority": "P1",
+      "requirement": "支持事件聚合/降噪、静默时间、告警级别、连续异常阈值",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "AUTO-010",
+      "priority": "P2",
+      "requirement": "提供可复用自动化模板与导入导出，包含权限说明",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "MEM-001",
+      "priority": "P0",
+      "requirement": "以显式 schema 存储 id, kind, scope, content, source, confidence, created_at, updated_at, expires_at, status",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "显式 schema 含 id/kind/scope/content/source/confidence/时间/状态",
+          "部分",
+          "`service.memory` 校验字段；`memory-policy.ts` 创建记录；`store` entities JSON",
+          "记录在通用 JSON entities 中而非带字段约束的显式数据库 schema；候选写入也可不含 expires_at。"
+        ]
+      }
+    },
+    {
+      "id": "MEM-002",
+      "priority": "P0",
+      "requirement": "支持用户主动“记住/纠正/删除/禁止记住某类信息”",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "主动记住、纠正、删除、禁止记住类别",
+          "已实现",
+          "`service.memory`、`server` memories 与 memory-policy；`control-memory-policy-http.test.ts` 禁记及修改策略",
+          "通过 API/UI 操作；自然语言各意图识别没有独立验收证据。"
+        ]
+      }
+    },
+    {
+      "id": "MEM-003",
+      "priority": "P0",
+      "requirement": "自动记忆写入经过提取→去重→冲突判断→写入策略；敏感/高风险类型默认人工确认",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "自动提取、去重、冲突、写入策略，敏感默认确认",
+          "部分",
+          "`control/memory-policy.ts` 的 submit、去重、key 冲突、敏感候选；`control-memory-policy-http.test.ts`",
+          "模型可提交候选，但未见从对话自动提取的独立流水线及端到端测试；冲突依赖显式 key。"
+        ]
+      }
+    },
+    {
+      "id": "MEM-004",
+      "priority": "P0",
+      "requirement": "使用 SQLite FTS5 对非秘密记忆全文检索；支持作用域（全局/用户/项目/会话）",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "非秘密 FTS5，全球/用户/项目/会话作用域",
+          "部分",
+          "`store` 的 `memory_fts` 和 scope 过滤；`control-runtime-extended.test.ts` owner/Telegram 隔离",
+          "scope 是自由字符串，未见 global/user/project/session 层次及继承规则的完整实现和测试。"
+        ]
+      }
+    },
+    {
+      "id": "MEM-005",
+      "priority": "P0",
+      "requirement": "记忆可以编辑、软删除、导出；编辑保持修订历史",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "编辑、软删除、导出、修订历史",
+          "部分",
+          "`store.put/remove` 记录 revision 和软删除；`server` 修订查询；`control-api.test.ts` 修订",
+          "未找到记忆单独导出 API/UI；配置导出不能等同于记忆导出。"
+        ]
+      },
+      "postAuditChange": {
+        "evidence": "tests/control-delivery-views.test.ts",
+        "description": "增加Owner认证记忆导出；编辑软删除和修订历史沿用原实现。",
+        "verification": "见docs/acceptance-results.json最终命令记录，文件存在不是通过证明"
+      }
+    },
+    {
+      "id": "MEM-006",
+      "priority": "P0",
+      "requirement": "过期记忆可自动失效；检索结果显示时间和来源，避免过期事实覆盖新事实",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "过期自动失效，检索显示时间来源，防旧覆盖新",
+          "部分",
+          "`store` 索引与搜索排除过期；`control/maintenance.ts` 过期清理；记录含 source/时间",
+          "未见基于时间的新旧事实冲突解决规则；没有专门覆盖旧事实覆盖新事实的测试。"
+        ]
+      }
+    },
+    {
+      "id": "MEM-007",
+      "priority": "P1",
+      "requirement": "可插拔 Embedding 语义检索并与 FTS5 混排，默认关闭或按需开启",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "MEM-008",
+      "priority": "P1",
+      "requirement": "定期回顾执行经验并提出“程序性记忆/Skill 草稿”，等待确认",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "MEM-009",
+      "priority": "P1",
+      "requirement": "记忆召回给出引用、可信度和冲突标志；用户可从回答追溯到原记录",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "MEM-010",
+      "priority": "P2",
+      "requirement": "支持加密记忆分类、保留周期、可配置自动清除策略",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "MODEL-001",
+      "priority": "P0",
+      "requirement": "使用 Pi AI / Pi Durable 支持的 provider 方式配置模型，支持验证连通、选择默认模型",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "Pi AI/Pi Durable provider 配置、连通测试、默认模型",
+          "部分",
+          "`service.provider/configureProviders`；`server` OpenAI models 连通测试；`App.vue` 表单",
+          "control 路径明确只接受 `openai`；未实现 Pi 支持的其他 provider 配置，连通测试也不验证所选模型可用。"
+        ]
+      }
+    },
+    {
+      "id": "MODEL-002",
+      "priority": "P0",
+      "requirement": "配置主模型和备用模型，针对超时/限流/5xx 有明确切换策略",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "主备模型及超时/限流/5xx 切换",
+          "部分",
+          "`service.finishTasks` 依据 priority 重试；`runtime.ts` 错误分类；`control-runtime-extended.test.ts` 写入后禁止切换",
+          "未见所有三种失败到备用模型的端到端覆盖；已有副作用时刻意禁止重放。"
+        ]
+      }
+    },
+    {
+      "id": "MODEL-003",
+      "priority": "P0",
+      "requirement": "记录按任务、会话、模型、日期聚合的 token/估算成本",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "按任务、会话、模型、日期聚合 token/估算成本",
+          "部分",
+          "`service.finishTasks` 写 `model_usage`；`control/budgets.ts` 按 provider/task/day 预留结算；`control-budgets.test.ts` 跨 provider/日期",
+          "`model_usage` 记录任务、会话和时间，但未见按具体模型/会话/日期聚合接口；会话 live usage 需验证不会跨任务重复计数。"
+        ]
+      }
+    },
+    {
+      "id": "MODEL-004",
+      "priority": "P0",
+      "requirement": "设置每任务、每日支出软上限和硬上限，超过时暂停或终止",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "每任务、每日软硬支出限额",
+          "已实现",
+          "`control/budgets.ts`、`service.admitModel`；`control-budgets.test.ts` 软硬阈值，`control-budgets-http.test.ts` 暂停后继续",
+          "本次未运行测试；未知成本按预留保守处理。"
+        ]
+      }
+    },
+    {
+      "id": "MODEL-005",
+      "priority": "P0",
+      "requirement": "密钥仅允许新增、轮换、删除、测试；UI 默认不回显明文",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "密钥新增、轮换、删除、测试，UI 不回显",
+          "已实现",
+          "`service.provider` 与 `server` 测试/删除，`store` secret；`browser/console.spec.ts` 密钥不回显；`control-api.test.ts` 秘密边界",
+          "连通测试局限 OpenAI，见 MODEL-001。"
+        ]
+      }
+    },
+    {
+      "id": "MODEL-006",
+      "priority": "P1",
+      "requirement": "可按任务类型设定模型路由：简单/复杂/代码/总结",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "MODEL-007",
+      "priority": "P1",
+      "requirement": "模型能力标签：工具调用、图片、长上下文、结构化输出；不兼容时拒绝或降级",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "MODEL-008",
+      "priority": "P2",
+      "requirement": "支持本地兼容 OpenAI API 的模型端点（部署于其他设备，不要求软路由本机推理）",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "EXT-001",
+      "priority": "P0",
+      "requirement": "设计 ToolDescriptor：名称、版本、输入 schema、副作用等级、权限、超时、幂等支持、执行器",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "ToolDescriptor 的名称、版本、schema、副作用、权限、超时、幂等、执行器",
+          "已实现",
+          "`control/policy.ts` 的接口和注册校验；`control-policy.test.ts`",
+          "需确保新增工具实际遵守描述符，注册校验本身不能证明执行行为。"
+        ]
+      }
+    },
+    {
+      "id": "EXT-002",
+      "priority": "P0",
+      "requirement": "工具执行必须穿过统一 Policy Gateway；提示词或 Skill 文档不可覆盖权限策略",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "所有工具统一 Policy Gateway，不可信文档不能覆盖策略",
+          "已实现",
+          "`runtime.ts` toolGateway 和 `service.tool`；`control-boundary.test.ts` 越界读拒绝、禁用工具生效",
+          "此结论针对 control runtime；legacy 独立运行模式并非同一网关部署路径。"
+        ]
+      }
+    },
+    {
+      "id": "EXT-003",
+      "priority": "P0",
+      "requirement": "P0 内置工具以只读和最小操作集为主：时间、受限 HTTP、记忆检索、任务查询、受限工作区文件操作",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "时间、受限 HTTP、记忆、任务查询、受限文件操作等最小工具",
+          "部分",
+          "`runtime.ts` 注册 current_time、web_fetch、memory_search、文件工具；`control-boundary.test.ts` 越界拒绝",
+          "未找到 control 任务查询工具的明确实现；各工具权限与 HTTP 边界需分别验证。"
+        ]
+      }
+    },
+    {
+      "id": "EXT-004",
+      "priority": "P0",
+      "requirement": "Skills 支持安装自受信任目录、启用/停用、查看内容、版本与权限声明",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "可信目录安装 Skill、启停、内容、版本、权限声明",
+          "部分",
+          "`skills.ts` 扫描可信目录；`runtime.ts` 列表/内容/版本/启停；`skills.test.ts` 禁止目录外加载",
+          "没有从可信目录安装的管理工作流；普通本地 Skill 的 permissions 固定为 `skill_load`，不是实际声明的工具权限清单。"
+        ]
+      }
+    },
+    {
+      "id": "EXT-005",
+      "priority": "P0",
+      "requirement": "Skills 以通用 Markdown/元信息表示程序性能力；需要执行时映射到显式注册工具",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "通用 Markdown/元信息 Skill，执行映射显式注册工具",
+          "部分",
+          "`skills.ts` 加载 Markdown；`service` 迁移 Skill 的 requiredTools/toolMap；`control/policy.ts` 注册工具",
+          "显式依赖映射针对已审查导入 Skill；普通可信目录 Skill 未见等价权限元信息及映射验证。"
+        ]
+      }
+    },
+    {
+      "id": "EXT-006",
+      "priority": "P1",
+      "requirement": "MCP 客户端接入采用独立连接/鉴权、工具白名单、超时、权限分类",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "EXT-007",
+      "priority": "P1",
+      "requirement": "Subagent 支持父子关联、独立预算、最大并发、最大深度和取消传播",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "EXT-008",
+      "priority": "P1",
+      "requirement": "Skills 自动生成只产生草稿，必须经用户审核和测试后激活",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "EXT-009",
+      "priority": "P1",
+      "requirement": "在管理 UI 中显示 Tool/MCP 调用历史、耗时、失败、权限审批",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "EXT-010",
+      "priority": "P2",
+      "requirement": "Remote Executor 通过显式注册、强认证、任务范围和结果签名接入",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "SEC-001",
+      "priority": "P0",
+      "requirement": "Web 初始化后强制登录；密码使用现代密码哈希（如 Argon2id），session 使用 HttpOnly/Secure/SameSite Cookie",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "已实现，待验收",
+          "`src/control/security.ts`、`src/control/server.ts`；`tests/control-security-extended.test.ts`",
+          "使用带盐 scrypt 和 HttpOnly/SameSite Cookie；Secure 取决于 HTTPS publicOrigin。本次未验证实际 HTTPS 代理与浏览器。"
+        ]
+      }
+    },
+    {
+      "id": "SEC-002",
+      "priority": "P0",
+      "requirement": "所有写入 API 具备 CSRF 防护、输入验证、频率限制、访问日志",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`src/control/server.ts` 的 Origin、CSRF、rate、字段检查；`tests/control-security-extended.test.ts`",
+          "需逐路由核对访问日志是否覆盖成功与失败写入；现有结构化启动日志不能证明所有写 API 都有访问日志。"
+        ]
+      }
+    },
+    {
+      "id": "SEC-003",
+      "priority": "P0",
+      "requirement": "IM 有 allowlist；平台 ID 不能通过显示名冒充；对 IM 指令应用工具权限上限",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "已实现，待验收",
+          "`src/channels/telegram.ts`、`src/control/apps.ts`、`src/control/policy.ts`；`tests/channel-adapters.test.ts`、`tests/control-outbound-authorization.test.ts`",
+          "需真实 Telegram 验证未知身份、显示名冒充和通道主体的权限上限。"
+        ]
+      }
+    },
+    {
+      "id": "SEC-004",
+      "priority": "P0",
+      "requirement": "工具权限分级：只读、低风险写入、敏感外部发送、宿主机/网络高危；高风险默认 deny",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "已实现，待验收",
+          "`src/control/policy.ts`；`tests/control-policy.test.ts`、`tests/control-boundary.test.ts`",
+          "需覆盖每个实际工具的风险分类与默认拒绝，不能由描述符本身推断所有入口均受控。"
+        ]
+      }
+    },
+    {
+      "id": "SEC-005",
+      "priority": "P0",
+      "requirement": "审批请求包含操作对象、影响、参数摘要、过期时间、发起任务、风险；批准必须绑定确切操作哈希",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "已实现，待验收",
+          "`src/control/policy.ts`；`tests/control-policy.test.ts`",
+          "审批绑定任务、工具与操作哈希并记录摘要；需核对用户界面能理解实际影响和完整参数。"
+        ]
+      }
+    },
+    {
+      "id": "SEC-006",
+      "priority": "P0",
+      "requirement": "审批状态：待批准、批准、拒绝、过期、撤回；全程可审计",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "已实现，待验收",
+          "`src/control/policy.ts`、`src/control/store.ts`；`tests/control-policy.test.ts`",
+          "有 PENDING、APPROVED、REJECTED、EXPIRED、REVOKED 及消费状态；需端到端验证到期、撤回和审计。"
+        ]
+      }
+    },
+    {
+      "id": "SEC-007",
+      "priority": "P0",
+      "requirement": "对 LLM 输出、网页、聊天内容、Skill 内容一律视为不可信；只有系统策略与认证用户动作可授权",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`src/control/policy.ts`、`src/control/service.ts`；`tests/control-boundary.test.ts`",
+          "测试覆盖一条越界读取诱导；不能证明全部网页、Skill、IM 和模型输出均无法影响授权。需扩展入口级注入验收。"
+        ]
+      }
+    },
+    {
+      "id": "SEC-008",
+      "priority": "P0",
+      "requirement": "默认拒绝 Docker Socket、宿主机敏感路径、任意 shell、host 网络和 OpenWrt 配置操作",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "已实现，待验收",
+          "`deploy/compose.yml`、`src/workspace.ts`；`tests/workspace.test.ts`、`tests/control-boundary.test.ts`",
+          "Compose 未挂 Docker Socket、未使用 host 网络；实际部署仍需 AT-002 检查挂载、工具和权限。"
+        ]
+      }
+    },
+    {
+      "id": "SEC-009",
+      "priority": "P0",
+      "requirement": "SSRF 防护：工具 HTTP 请求默认限制私有地址、link-local、loopback 和云元数据地址；特殊内网访问需手动逐目标允许",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "已实现，待验收",
+          "`src/runtime.ts`、`src/workspace.ts`；`tests/tools.test.ts`",
+          "需运行重定向、DNS 重绑定、混合地址和 metadata 的实际请求测试；不能以工具声明代替网络验收。"
+        ]
+      }
+    },
+    {
+      "id": "SEC-010",
+      "priority": "P0",
+      "requirement": "日志、导出与通知中屏蔽 token、密钥、Cookie、Authorization header 和常见秘密模式",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`src/control/maintenance.ts`、`src/migrations/importers.ts`；`tests/control-maintenance.test.ts`",
+          "导出采用白名单、导入采用模式脱敏；任意自定义秘密模式无法保证识别，通知及所有日志路径需注入测试。"
+        ]
+      }
+    },
+    {
+      "id": "SEC-011",
+      "priority": "P0",
+      "requirement": "可信访问：默认仅 localhost；若对 LAN/VPN 监听，必须启用鉴权、TLS 或可信认证代理，并限制受信网段",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`deploy/compose.yml`、`src/control/server.ts`；`docs/SECURITY.md`",
+          "Compose 默认绑定 127.0.0.1；LAN/VPN 的 TLS、认证代理和可信网段依赖部署配置，未见实际网络验收。"
+        ]
+      }
+    },
+    {
+      "id": "SEC-012",
+      "priority": "P0",
+      "requirement": "维护不可被 Agent 删除或修改的独立审计流水（至少应用级 append-only + 轮转备份；不是防宿主机管理员篡改的强承诺）",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "已实现，待验收",
+          "`src/control/store.ts`、`src/control/maintenance.ts`；`tests/control-maintenance.test.ts`",
+          "应用级追加审计与轮转快照；不承诺防宿主管理员修改。需实际验证 Agent 无权删除或修改审计及备份。"
+        ]
+      }
+    },
+    {
+      "id": "SEC-013",
+      "priority": "P1",
+      "requirement": "支持安全事件告警、危险权限策略导入导出和安全自检",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "WEB-001",
+      "priority": "P0",
+      "requirement": "首次配置向导：登录、时区、模型、IM、权限说明、连接自检",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "首次向导、权限说明、连接自检",
+          "部分",
+          "`App.vue` 首次配置表单和权限文字；`browser/console.spec.ts` 首次配置",
+          "未见首次向导中模型/IM 连接自检和数据目录检测；setup 失败原子性见 SYS-002。"
+        ]
+      }
+    },
+    {
+      "id": "WEB-002",
+      "priority": "P0",
+      "requirement": "Dashboard 总览：服务状态、模型在线性、IM 连接、当前任务、待审批、今日 Token/成本、最近错误",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "Dashboard 状态、模型/IM、任务、审批、今日成本、错误",
+          "部分",
+          "`App.vue` dashboard 读取 `system/summary`；`service.summary` 返回运行数、审批数、provider 状态和错误",
+          "summary 未返回 IM 连接详情、今日 token/成本；未见专门 dashboard 字段测试。"
+        ]
+      },
+      "postAuditChange": {
+        "evidence": "tests/control-delivery-views.test.ts",
+        "description": "总览补真实通道与今日预算账本用量；未知成本标为预留估算。",
+        "verification": "见docs/acceptance-results.json最终命令记录，文件存在不是通过证明"
+      }
+    },
+    {
+      "id": "WEB-003",
+      "priority": "P0",
+      "requirement": "Chat：会话列表、搜索、消息流、工具执行折叠、运行/取消、模型选择、附件状态",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "Chat 列表搜索、消息流、折叠工具、运行/取消、模型、附件",
+          "部分",
+          "`App.vue` 会话、消息、工具折叠及模型选择；`browser/console.spec.ts` 聊天",
+          "取消按钮依赖 `selected.activeTaskId`，当前会话返回未提供该字段；附件仅显示已有状态；搜索仅当前已加载项。"
+        ]
+      },
+      "postAuditChange": {
+        "evidence": "tests/browser/chat-cancel.spec.ts",
+        "description": "按当前会话筛选活动任务，处理异步切换竞态，聊天页可取消运行。",
+        "verification": "见docs/acceptance-results.json最终命令记录，文件存在不是通过证明"
+      }
+    },
+    {
+      "id": "WEB-004",
+      "priority": "P0",
+      "requirement": "Task Center：按状态/来源/日期筛选，任务详情含状态时间线、步骤、错误、成本、重试、审批、交付状态",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "Task Center 筛选、时间线、步骤、错误、成本、重试、审批、交付",
+          "部分",
+          "`App.vue` 筛选/详情、`server` task 详情；`control-api.test.ts` 任务状态",
+          "task 详情返回 steps、operations、deliveries、actionIntents，但 UI 读取 `selected.approvals`，后端未返回该字段；成本未提供明确聚合展示。"
+        ]
+      },
+      "postAuditChange": {
+        "evidence": "tests/control-delivery-views.test.ts",
+        "description": "任务详情增加关联审批，列表支持conversationId过滤；保留其余审计限制。",
+        "verification": "见docs/acceptance-results.json最终命令记录，文件存在不是通过证明"
+      }
+    },
+    {
+      "id": "WEB-005",
+      "priority": "P0",
+      "requirement": "Automations：Cron/Heartbeat 清单、表达式编辑、下次运行预览、暂停/立即执行、历史记录",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "Cron/Heartbeat 清单、表达式、预览、暂停/立即执行、历史",
+          "部分",
+          "`App.vue` 自动化及 Cron 预览，`server` schedules actions/history；`control-api.test.ts` cron/heartbeat",
+          "Heartbeat 未见立即执行或历史 API；页面的自动化统一暂停按钮对 heartbeat PATCH 依赖表单校验，须专项验证。"
+        ]
+      },
+      "postAuditChange": {
+        "evidence": "tests/control-heartbeat-actions.test.ts",
+        "description": "Heartbeat补手动运行、暂停/继续和任务历史。",
+        "verification": "见docs/acceptance-results.json最终命令记录，文件存在不是通过证明"
+      }
+    },
+    {
+      "id": "WEB-006",
+      "priority": "P0",
+      "requirement": "Memory：检索、按类型/作用域筛选、来源、编辑、失效、删除、冲突提示",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "Memory 搜索、类型/作用域、来源、编辑、失效、删除、冲突",
+          "部分",
+          "`App.vue` 过滤及详情、`MemoryPolicy.vue`；`browser/v11-flows.spec.ts` 敏感候选审查",
+          "候选冲突审查能力存在，但普通记忆列表未见明确冲突提示；需验证失效状态操作及过滤。"
+        ]
+      }
+    },
+    {
+      "id": "WEB-007",
+      "priority": "P0",
+      "requirement": "Providers：模型列表、密钥添加/删除/测试、路由优先级、成本预算",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "Providers 模型、密钥增删测、优先级、预算",
+          "部分",
+          "`App.vue` Providers 和 `forms.ts`；`server` provider CRUD/test；`control-budgets-http.test.ts` 预算",
+          "供应商仅 OpenAI；未见针对全部路由优先级和成本预算 UI 的完整测试。"
+        ]
+      }
+    },
+    {
+      "id": "WEB-008",
+      "priority": "P0",
+      "requirement": "Channels：Telegram 凭据测试、用户 allowlist、最近错误、消息送达状态",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "Telegram 凭据测试、allowlist、最近错误、投递状态",
+          "部分",
+          "`App.vue` channels 列表、测试和错误；`service.channels` 保存 outbox；`control-api.test.ts` 不确定投递",
+          "投递状态显示在任务详情而非通道页面；未见通道页集中展示送达状态。"
+        ]
+      }
+    },
+    {
+      "id": "WEB-009",
+      "priority": "P0",
+      "requirement": "Skills & Tools：查看/启用/停用工具、权限等级和 Skill 内容（P0 可仅本地可信仓库）",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "查看/启停工具、权限和 Skill 内容",
+          "已实现",
+          "`App.vue` 工具/Skill 列表和启停；`server` tools/skills；`control-boundary.test.ts` 禁用后拒绝",
+          "本次未运行浏览器及后端测试。"
+        ]
+      }
+    },
+    {
+      "id": "WEB-010",
+      "priority": "P0",
+      "requirement": "Approvals：待审批清单、风险说明、拒绝/批准、时限和历史",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "审批清单、风险、批准/拒绝、时限、历史",
+          "已实现",
+          "`App.vue` 审批列表及操作；`server` 决策；`control-api.test.ts` 哈希绑定",
+          "Gmail 审批由应用中心单独展示；本次未运行浏览器测试。"
+        ]
+      }
+    },
+    {
+      "id": "WEB-011",
+      "priority": "P0",
+      "requirement": "System：版本、资源使用、日志、审计、备份/恢复、诊断包、升级提示",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "System 版本、资源、日志、审计、备份恢复、诊断包、升级提示",
+          "部分",
+          "`App.vue` system/日志/审计/备份恢复；`server` diagnostics；`control-operations.test.ts` 恢复",
+          "系统页未见诊断包下载和升级提示；未见完整版本信息。"
+        ]
+      },
+      "postAuditChange": {
+        "evidence": "tests/browser/audit-views.spec.ts",
+        "description": "增加诊断/配置下载、实际版本与升级操作指引。",
+        "verification": "见docs/acceptance-results.json最终命令记录，文件存在不是通过证明"
+      }
+    },
+    {
+      "id": "WEB-012",
+      "priority": "P0",
+      "requirement": "设置：时区、语言、通知、预算、保留策略、密码修改、会话注销",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "时区、语言、通知、预算、保留、改密码、注销",
+          "已实现",
+          "`App.vue` 设置、密码和注销；`server` settings/auth；`control-settings-v11.test.ts` 通知配置",
+          "具体语言与保留策略的实际生效范围未做完整 UI 验收。"
+        ]
+      }
+    },
+    {
+      "id": "WEB-013",
+      "priority": "P0",
+      "requirement": "SSE 实时事件具有单调事件序号和重连恢复；断线后 UI 不丢失最终状态",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "SSE 单调序号、重连恢复，断线不丢最终状态",
+          "已实现",
+          "`store` events 自增、`server` cursor/reset、`apps/web/src/events.ts`；`control-api.test.ts` cursor/reset，`apps/web/src/events.check.ts`",
+          "本次未执行重连测试；保留窗口外通过 reset 重新读取状态。"
+        ]
+      }
+    },
+    {
+      "id": "WEB-014",
+      "priority": "P0",
+      "requirement": "统一空状态、错误状态、loading、权限错误、危险操作确认；符合键盘与基本无障碍实践",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "空/错误/loading/权限/危险确认及键盘无障碍",
+          "部分",
+          "`App.vue` 空状态、错误、loading、确认、跳转链接；`browser/v11.spec.ts` 应用中心键盘/窄屏",
+          "未见覆盖全部关键页面与权限错误的键盘及无障碍检查；不能由一个页面测试推断全部符合。"
+        ]
+      }
+    },
+    {
+      "id": "WEB-015",
+      "priority": "P1",
+      "requirement": "任务执行图、事件规则、MCP 管理和 Subagent 树形视图",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "WEB-016",
+      "priority": "P2",
+      "requirement": "多主题/深色模式、移动端精细优化、远程执行器可视化",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "WEB-017",
+      "priority": "P0",
+      "requirement": "迁移中心：来源选择、离线包上传/只读路径、导入预览、映射、冲突与回滚",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "迁移中心来源、离线包/只读路径、预览、映射、冲突、回滚",
+          "部分",
+          "`v11/MigrationCenter.vue` 扫描、计划、冲突、审核、回滚；`browser/v11-flows.spec.ts` 真实迁移批次",
+          "页面具流程，具体来源兼容、安全和回滚完整性属迁移组另审；本次未运行端到端测试。"
+        ]
+      }
+    },
+    {
+      "id": "WEB-018",
+      "priority": "P0",
+      "requirement": "应用连接中心：账号 OAuth 授权/状态/权限清单、测试、断开、历史记录",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "应用连接 OAuth、状态、权限、测试、断开、历史",
+          "部分",
+          "`v11/AppsCenter.vue` OAuth、状态、scope、测试、删除；`browser/v11-flows.spec.ts` 邮件流程",
+          "未见连接历史单独展示；连接/撤销和 OAuth 实际可用性由连接器组另审。"
+        ]
+      }
+    },
+    {
+      "id": "WEB-019",
+      "priority": "P0",
+      "requirement": "Gmail 发送审批 UI：发送账号、收件人、主题、正文、附件、规则、送达与不确定状态",
+      "audit": {
+        "document": "docs/P0-FUNCTIONAL-AUDIT.md",
+        "assessment": [
+          "Gmail 发送审批账号、收件人、主题、正文、附件、规则、送达及不确定状态",
+          "已实现",
+          "`v11/AppsCenter.vue` 服务端快照预览、规则、发送和 SEND_UNCERTAIN；`browser/v11-flows.spec.ts` 审批发送一次",
+          "预览主要以完整 JSON 展示；本次未运行测试，真实 Gmail 结果不由本审计推断。"
+        ]
+      }
+    },
+    {
+      "id": "WEB-020",
+      "priority": "P1",
+      "requirement": "Computer Use：远端 Worker 配对、实时只读观察、操作时间线、人工接管、暂停/恢复",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "WEB-021",
+      "priority": "P1",
+      "requirement": "Bot Profiles + Routine 工作看板，查看 Bot 权限、任务、连接器、预算和报警",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "OPS-001",
+      "priority": "P0",
+      "requirement": "结构化 JSON 日志包含 trace_id/task_id/run_id/conversation_id，具日志级别、轮转与保留上限",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`src/control/main.ts`、`src/control/maintenance.ts`、`deploy/compose.yml`",
+          "有 JSON 启动日志及 Docker 日志大小轮转；未证实所有日志包含要求的四种关联 ID、级别和保留策略。"
+        ]
+      }
+    },
+    {
+      "id": "OPS-002",
+      "priority": "P0",
+      "requirement": "监控进程 RSS、CPU、磁盘空间、SQLite 大小、运行任务、队列深度、失败率、IM 延迟、模型错误",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`src/control/maintenance.ts:87`；`tests/control-maintenance.test.ts`",
+          "RSS、CPU、磁盘、数据库、任务、失败及模型错误有指标；`imLatencyMs` 固定为 `null`，缺实际 IM 延迟采集。"
+        ]
+      },
+      "postAuditChange": {
+        "evidence": "tests/control-maintenance.test.ts",
+        "description": "最近100条带有效时间戳的已确认Telegram投递，统计自任务创建至确认的平均延迟；无样本为null。",
+        "verification": "见docs/acceptance-results.json最终命令记录，文件存在不是通过证明"
+      }
+    },
+    {
+      "id": "OPS-003",
+      "priority": "P0",
+      "requirement": "自动备份应用与 Pi Durable SQLite、一致性配置及受管文件；禁止只简单复制活动中的 WAL 数据文件",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`src/control/operations.ts`、`src/backup.ts`；`tests/control-operations.test.ts`",
+          "两库使用 SQLite backup API；需核对受管文件与配置均纳入一致性备份，并在活动写入时做真实恢复验收。"
+        ]
+      }
+    },
+    {
+      "id": "OPS-004",
+      "priority": "P0",
+      "requirement": "恢复前先备份当前状态、展示覆盖范围，并要求二次确认；恢复后执行版本检查和校验",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "已实现，待验收",
+          "`src/control/operations.ts`、`src/control/server.ts`；`tests/control-operations.test.ts`",
+          "有预备份、确认和校验及故障回滚测试；需检查 UI 覆盖范围展示并在空环境恢复。"
+        ]
+      }
+    },
+    {
+      "id": "OPS-005",
+      "priority": "P0",
+      "requirement": "配置日志/历史/附件保留期限并清理，防止占满软路由存储",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`src/control/maintenance.ts`、`deploy/compose.yml`；`tests/control-maintenance.test.ts`",
+          "已清理到期任务、事件及受管附件，并设置容器日志轮转；需核对所有历史和日志的配置与清理覆盖。"
+        ]
+      }
+    },
+    {
+      "id": "OPS-006",
+      "priority": "P0",
+      "requirement": "磁盘低水位自动进入保护模式，暂停可能产生大量写入的功能，并保留可恢复日志",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "已实现，待验收",
+          "`src/control/maintenance.ts`、`src/control/service.ts`；`tests/control-maintenance.test.ts`",
+          "低水位及探测失败触发保护；真实卷空间不足、日志保留和恢复行为尚未本次验证。"
+        ]
+      }
+    },
+    {
+      "id": "OPS-007",
+      "priority": "P1",
+      "requirement": "提供离线诊断包（脱敏）和自检命令 doctor",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "OPS-008",
+      "priority": "P1",
+      "requirement": "支持平滑升级前备份、运行时关闭入站、完成/中断任务与恢复",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "MIG-001",
+      "priority": "P0",
+      "requirement": "定义 SourceImporter 插件接口：probe → inventory → validate → plan → stage → apply → verify → rollback，源类型、源版本与格式版本显式声明",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`src/migrations/index.ts`、`src/migrations/core.ts`、`src/migrations/importers.ts`；`tests/migrations-core.test.ts`",
+          "有扫描、计划、暂存、应用、验证、回滚；未找到统一 `SourceImporter` 插件接口及全部阶段的显式源格式契约。"
+        ]
+      },
+      "postAuditChange": {
+        "evidence": "tests/migrations-contract.test.ts",
+        "description": "生产MigrationService实现SourceImporter阶段契约，保持现有扫描和引擎API兼容。",
+        "verification": "见docs/acceptance-results.json最终命令记录，文件存在不是通过证明"
+      }
+    },
+    {
+      "id": "MIG-002",
+      "priority": "P0",
+      "requirement": "支持 OpenClaw 完整备份包、显式选取的状态目录和工作区目录的离线导入",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`src/migrations/source.ts`、`src/migrations/importers.ts:2417`；`tests/migrations-integration.test.ts`；`docs/MIGRATION-COMPATIBILITY.md`",
+          "ZIP、只读状态目录和工作区有实现。SRS §3.12 要求导入完整备份并显示版本、清单和未知字段；`MIGRATION_DESIGN.md` §7–8 要求针对固定版本建立至少两个 fixture，不要求支持全部历史版本。旧 JSONL 被标记 `legacy_jsonl_ignored`，是明确的版本限制，不能仅据此判为 P0 实现缺口。已声明版本仍需以真实完整备份完成 MT-001。"
+        ]
+      }
+    },
+    {
+      "id": "MIG-003",
+      "priority": "P0",
+      "requirement": "支持 Hermes Agent ~/.hermes/ 导出或只读副本导入；读取 state.db 及可识别配置、记忆、Skills、Cron",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`src/migrations/importers.ts:2795`；`tests/migrations-importers.test.ts`",
+          "支持已识别 Hermes schema 和相关文件；真实 `~/.hermes/` 导出及其他版本未验收，未知格式不能推定支持。"
+        ]
+      }
+    },
+    {
+      "id": "MIG-004",
+      "priority": "P0",
+      "requirement": "导入前生成只读预览和逐类统计：配置、身份/指令、Memory、历史会话、Skills、MCP、Cron、附件",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`src/migrations/index.ts`、`src/migrations/importers.ts`、`src/control/migrations.ts`；`tests/control-migrations-http.test.ts`",
+          "有清单、计数和警告；受支持类型及未知字段的分类完整性需用真实来源核验。"
+        ]
+      }
+    },
+    {
+      "id": "MIG-005",
+      "priority": "P0",
+      "requirement": "使用 MigrationManifest 和 ImportPlan；逐项 source_id/hash/target_id/status/reason、原始时间和来源；执行前必须显式确认",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`src/migrations/core.ts`；`tests/migrations-core.test.ts`",
+          "计划包括 sourceId、hash、targetId、状态、来源和确认哈希；并非每项都明确提供独立 reason、原始时间或完整 Manifest 字段。"
+        ]
+      }
+    },
+    {
+      "id": "MIG-006",
+      "priority": "P0",
+      "requirement": "会话作为**历史消息与工具轨迹归档**，允许浏览、搜索；“继续对话”创建新的 Pi Durable 会话，引用源会话及受限历史摘要/选定消息",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "已实现，待验收",
+          "`src/migrations/core.ts`、`src/control/migrations.ts`；`tests/migrations-core.test.ts`、`tests/control-migrations-http.test.ts`",
+          "有历史搜索和受限不可信续聊材料；须完成 MT-006，证明新 Pi 会话及工具调用不会重放旧轨迹。"
+        ]
+      }
+    },
+    {
+      "id": "MIG-007",
+      "priority": "P0",
+      "requirement": "MEMORY.md、USER.md、SOUL.md、Agent/Prompt 文件按类型与作用域映射；内容有来源、信任级别及冲突预览",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`src/migrations/importers.ts`、`src/migrations/core.ts`；`tests/migrations-importers.test.ts`",
+          "指令和记忆带来源与不可信标记，支持人工提升；各文件类型、作用域与冲突预览需真实来源验收。"
+        ]
+      }
+    },
+    {
+      "id": "MIG-008",
+      "priority": "P0",
+      "requirement": "Skills 仅以**停用/待审**状态导入；记录脚本依赖、所需工具、来源哈希；MCP 只导入配置草案",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`src/migrations/core.ts`、`src/migrations/importers.ts`；`tests/migrations-core.test.ts`",
+          "Skill 默认为禁用和待审，MCP 为草案；需逐项核对脚本依赖与工具声明能否完整识别。"
+        ]
+      }
+    },
+    {
+      "id": "MIG-009",
+      "priority": "P0",
+      "requirement": "Cron/自动化只导入为**禁用草案**，包含时区、运行模式、目标通道、依赖能力和原始表达式；用户审查后才激活",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`src/migrations/core.ts` 的 `nativeDraft`；`tests/migrations-core.test.ts`",
+          "草案禁用且检查名称、表达式、时区和提示；草案字段未完整映射运行模式、目标通道及依赖能力，需人工补齐。"
+        ]
+      },
+      "postAuditChange": {
+        "evidence": "tests/migrations-contract.test.ts",
+        "description": "Cron草案保留明确支持的运行模式、目标及依赖字段；缺失项报告，始终禁用，激活仍须重新映射授权。",
+        "verification": "见docs/acceptance-results.json最终命令记录，文件存在不是通过证明"
+      }
+    },
+    {
+      "id": "MIG-010",
+      "priority": "P0",
+      "requirement": "默认**不自动复制** API Key、OAuth access/refresh token、Cookie、IM Bot token、邮箱授权；建立待重新授权清单；提供显式安全迁移扩展点",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`src/migrations/index.ts`、`src/migrations/importers.ts`；`tests/migrations-importers.test.ts`",
+          "跳过已识别敏感文件并列重授权；未见完整显式安全迁移扩展点，模式识别也不能保证找出所有自定义秘密。"
+        ]
+      }
+    },
+    {
+      "id": "MIG-011",
+      "priority": "P0",
+      "requirement": "源目录只读；绝不覆盖/改写来源；从活动 SQLite 导入时使用来源官方备份/SQLite backup API 或静态一致性快照；不得只复制 .db 忽略 WAL",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "已实现，待验收",
+          "`src/migrations/source.ts`、`src/migrations/importers.ts`；`tests/migrations-source.test.ts`",
+          "只读挂载校验、文件校验及 SQLite 一致性检查已有实现；需 Linux 实际只读挂载和活动 WAL 来源验收。"
+        ]
+      }
+    },
+    {
+      "id": "MIG-012",
+      "priority": "P0",
+      "requirement": "按 (source_system, source_instance_id, source_object_id, content_hash) 实现幂等导入；重复导入只更新确有变化项",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "已实现，待验收",
+          "`src/migrations/core.ts`；`tests/migrations-core.test.ts`",
+          "身份加内容哈希去重，变更按冲突处理；需用真实来源执行三次导入及单项变化的 MT-003。"
+        ]
+      }
+    },
+    {
+      "id": "MIG-013",
+      "priority": "P0",
+      "requirement": "冲突策略有 保留目标 / 导入为新项 / 手动合并，默认不覆盖本系统有效数据；导入失败保留清晰状态",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "已实现，待验收",
+          "`src/migrations/core.ts`；`tests/migrations-core.test.ts`",
+          "支持 keep/new/manualmerge，默认 keep；需核对 UI 可选择和解释各冲突。"
+        ]
+      }
+    },
+    {
+      "id": "MIG-014",
+      "priority": "P0",
+      "requirement": "分阶段 staging → 校验 → 数据库事务提交；跨文件副作用使用补偿式回滚；对激活与重授权采用独立步骤",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`src/migrations/core.ts`、`src/control/migrations.ts`；`tests/migrations-core.test.ts`",
+          "数据库批次事务、哈希校验和按批回滚存在；跨文件故障补偿及 SIGKILL 恢复仍需 MT-004 证明。"
+        ]
+      }
+    },
+    {
+      "id": "MIG-015",
+      "priority": "P0",
+      "requirement": "Web 提供“迁移向导、映射预览、冲突处理、验证报告、撤销本批次”的全流程",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`src/control/migrations.ts`、`apps/web/src`；`tests/control-migrations-http.test.ts`、`tests/browser/v11-flows.spec.ts`",
+          "HTTP 和页面有迁移路径；映射、冲突、报告、撤销的完整浏览器流程及真实包尚未本次验收。"
+        ]
+      }
+    },
+    {
+      "id": "MIG-016",
+      "priority": "P1",
+      "requirement": "可选**单向增量只读同步**来源的新会话/记忆，具 source cursor、变更检测、删除冲突提示",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "MIG-017",
+      "priority": "P1",
+      "requirement": "生成中立格式的 HDA Export Bundle（含 manifest、JSONL、Markdown、受管资源）供未来再迁移",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "MIG-018",
+      "priority": "P1",
+      "requirement": "兼容性矩阵按已测试 OpenClaw/Hermes 版本发布；遇到未知 schema/version 不擅自猜测",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "CONN-001",
+      "priority": "P0",
+      "requirement": "统一 AppConnector 契约：manifest/discoverScopes/connect/test/refresh/revoke/listActions/invoke",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`src/connectors/actions.ts:44`、`src/connectors/oauth.ts`；`tests/connectors-oauth.test.ts`",
+          "Gmail 实现 manifest、scope、动作和 OAuth 生命周期；未找到统一 `AppConnector` 接口把所有要求方法约束为可插拔契约。"
+        ]
+      },
+      "postAuditChange": {
+        "evidence": "tests/migrations-contract.test.ts",
+        "description": "生产GmailConnector实现AppConnector，invoke只创建受治理意图；test仅本地连接检查，不冒充远端探活。",
+        "verification": "见docs/acceptance-results.json最终命令记录，文件存在不是通过证明"
+      }
+    },
+    {
+      "id": "CONN-002",
+      "priority": "P0",
+      "requirement": "动作元数据声明 inputSchema, outputSchema, read/write/send/delete, risk, requiredScopes, timeout, retryClass, approvalPolicy",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "已实现，待验收",
+          "`src/connectors/actions.ts:46`；`tests/connectors-actions.test.ts`",
+          "Gmail 动作声明 schema、风险、scope、超时、重试和审批；schema 内容及后续连接器的强制验证仍需核验。"
+        ]
+      }
+    },
+    {
+      "id": "CONN-003",
+      "priority": "P0",
+      "requirement": "账号级连接与分层权限：仅 Owner 可以连接，指定 Agent Profile/任务/工作流获最小必要动作能力",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "已实现，待验收",
+          "`src/connectors/actions.ts`、`src/control/apps.ts`；`tests/control-outbound-authorization.test.ts`",
+          "Owner 建连，grant 绑定账号、主体、profile、task、workflow；需真实端到端验证权限撤销。"
+        ]
+      }
+    },
+    {
+      "id": "CONN-004",
+      "priority": "P0",
+      "requirement": "支持 OAuth 2.0 Authorization Code + PKCE（适用时），state 校验、redirect URI 白名单、凭据加密存储、撤销",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "已实现，待验收",
+          "`src/connectors/oauth.ts`、`src/control/store.ts`；`tests/connectors-oauth.test.ts`",
+          "PKCE、state、回调白名单、加密和撤销有实现；尚无真实 Google 授权验收。"
+        ]
+      }
+    },
+    {
+      "id": "CONN-005",
+      "priority": "P0",
+      "requirement": "在 LAN/软路由场景下提供可工作的授权方案：可信 HTTPS 域名回调；或单独受控本地授权辅助端（需威胁建模）",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`src/connectors/oauth.ts`、`docs/GMAIL.md`",
+          "要求配置可信 HTTPS 精确回调；代码提供方案，但真实 LAN/VPN 域名、证书及 Google 回调未验收。"
+        ]
+      }
+    },
+    {
+      "id": "CONN-006",
+      "priority": "P0",
+      "requirement": "统一连接状态：DISCONNECTED/AUTH_PENDING/CONNECTED/EXPIRED/NEEDS_REAUTH/ERROR/REVOKED",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "已实现，待验收",
+          "`src/connectors/oauth.ts`、`src/control/apps.ts`；`tests/connectors-oauth.test.ts`",
+          "有连接状态和失效映射；需以真实授权、刷新及撤销检查 UI 状态。"
+        ]
+      }
+    },
+    {
+      "id": "CONN-007",
+      "priority": "P0",
+      "requirement": "外部动作建立操作意图 ActionIntent：不可变参数快照、请求哈希、审查、执行结果、确认不确定状态",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "已实现，待验收",
+          "`src/connectors/actions.ts`；`tests/connectors-actions.test.ts`",
+          "持久化意图、哈希、结果及不确定状态；真实中断后外部效果未验收。"
+        ]
+      }
+    },
+    {
+      "id": "CONN-008",
+      "priority": "P0",
+      "requirement": "支持动作级限流、每日次数上限、允许的目标/域名/收件人名单、Dry-run 和取消",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "已实现，待验收",
+          "`src/connectors/actions.ts`、`src/control/apps.ts`；`tests/connectors-actions.test.ts`",
+          "Gmail 有硬限流、规则收件人/域名、dry-run 和取消；通用连接器能力未建立，真实提供商配额尚未验证。"
+        ]
+      }
+    },
+    {
+      "id": "CONN-009",
+      "priority": "P1",
+      "requirement": "应用连接器 SDK：模板、测试夹具、权限注册、错误码、文档生成",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "CONN-010",
+      "priority": "P1",
+      "requirement": "可接入 Gmail 读取/草稿、Google Calendar、Drive、GitHub 等，但**各自权限独立授权**",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "CONN-011",
+      "priority": "P1",
+      "requirement": "可将外部 MCP Server 映射为受控 AppConnector，逐工具授权和审计",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "GML-001",
+      "priority": "P0",
+      "requirement": "Gmail OAuth 用户授权，首发仅申请 https://www.googleapis.com/auth/gmail.send；在 UI 显示该 scope 是 Sensitive",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "已实现，待验收",
+          "`src/connectors/oauth.ts`、`src/connectors/actions.ts`；`tests/connectors-oauth.test.ts`",
+          "只允许 gmail.send 且声明 Sensitive；真实 Google 授权、UI 展示及可能的 Google 审核未验收。"
+        ]
+      }
+    },
+    {
+      "id": "GML-002",
+      "priority": "P0",
+      "requirement": "仅提供 gmail.send_email：to,cc?,bcc?,subject,plainText,html?,attachments?；对收件人/标题/编码/附件大小校验",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "已实现，待验收",
+          "`src/connectors/actions.ts`、`src/connectors/mime.ts`；`tests/connectors-mime.test.ts`",
+          "提供发送动作、地址、主题、MIME、附件及大小校验；真实邮件客户端兼容性未验收。"
+        ]
+      }
+    },
+    {
+      "id": "GML-003",
+      "priority": "P0",
+      "requirement": "默认“草拟本系统待发送内容 → Web/IM 审批 → 发送”；不得让用户仅说“帮我写封邮件”就直接发送",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "已实现，待验收",
+          "`src/connectors/actions.ts`、`src/control/apps.ts`；`tests/connectors-actions.test.ts`",
+          "默认提议后审批，自动规则须显式配置；需真实聊天中验证仅要求撰写不会触发发送。"
+        ]
+      }
+    },
+    {
+      "id": "GML-004",
+      "priority": "P0",
+      "requirement": "审批界面完整预览收件人、主题、正文、附件、发送账号、可能的敏感信息；批准绑定不可变内容哈希",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`src/control/apps.ts`、`src/connectors/actions.ts`；`tests/connectors-actions.test.ts`、`tests/browser/v11-flows.spec.ts`",
+          "哈希绑定内容和附件；发送账号由 Owner 确认而非 Google 身份核验，敏感内容提示及完整界面预览需端到端检查。"
+        ]
+      }
+    },
+    {
+      "id": "GML-005",
+      "priority": "P0",
+      "requirement": "支持显式配置“已预授权自动发送规则”：精确接收人或域名、发送模板、工作流、频率、预算、有效期",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "已实现，待验收",
+          "`src/connectors/actions.ts`；`tests/connectors-actions.test.ts`",
+          "规则绑定接收人/域名、模板哈希、工作流、频率、日限额及期限；真实自动触发流程未验收。"
+        ]
+      }
+    },
+    {
+      "id": "GML-006",
+      "priority": "P0",
+      "requirement": "避免 Gmail HTTP 超时/响应丢失导致二次发送：保存意图和 RFC Message-ID；没有可核验结果时标记 SEND_UNCERTAIN，默认不重试",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "已实现，待验收",
+          "`src/connectors/actions.ts`、`src/control/apps.ts`；`tests/connectors-actions.test.ts`",
+          "保存 Message-ID，响应丢失和重启标记 SEND_UNCERTAIN，默认不重试；真实 Gmail 阻断响应未验收。"
+        ]
+      }
+    },
+    {
+      "id": "GML-007",
+      "priority": "P0",
+      "requirement": "Gmail 限流、失效授权、撤销、配额、附件失败给出可操作错误；需要人工重授权时暂停动作",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "已实现，待验收",
+          "`src/connectors/actions.ts`、`src/connectors/oauth.ts`；`tests/connectors-actions.test.ts`",
+          "区分失效授权、限流和配额等错误；真实提供商错误文案及重新授权交互未验收。"
+        ]
+      }
+    },
+    {
+      "id": "GML-008",
+      "priority": "P0",
+      "requirement": "管理后台包括账户连接、权限说明、发送历史、审批、规则及撤销入口；允许删除已连接账号",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`src/control/apps.ts`、`apps/web/src`；`tests/control-apps-http.test.ts`、`tests/browser/v11-flows.spec.ts`",
+          "有连接、规则、意图及删除接口；完整管理后台流程、历史及权限说明需要浏览器与真实账号验收。"
+        ]
+      }
+    },
+    {
+      "id": "GML-009",
+      "priority": "P1",
+      "requirement": "可选独立追加 gmail.compose 以管理 Gmail 原生草稿；新增 scope 必须单独征求同意",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "GML-010",
+      "priority": "P1",
+      "requirement": "可选 gmail.readonly 读取、线程搜索、摘要；必须提示 Restricted scope 的合规与潜在审核成本",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "GML-011",
+      "priority": "P1",
+      "requirement": "邮件触发器：轮询或 Gmail push/watch（需验证 API/基础设施可行性），去重后触发自动化",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "GML-012",
+      "priority": "P1",
+      "requirement": "可选择把邮件正文作为 Memory 候选；默认不把完整邮箱内容永久写入 Memory",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "CUA-001",
+      "priority": "P0",
+      "requirement": "预留 ExecutionBackend 接口：provision/start/observe/act/stop/checkpoint/cleanup，任务/租户授权和能力声明",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "已实现，待验收",
+          "`src/execution/index.ts`；`tests/execution.test.ts`",
+          "定义七阶段接口、任务/主体/租户授权和能力声明。测试使用 FakeBackend；真实 Browser Worker 属 P1，不能由此推定已交付。"
+        ]
+      }
+    },
+    {
+      "id": "CUA-002",
+      "priority": "P1",
+      "requirement": "实装独立 Browser Worker：首选 Playwright 浏览器自动化，可由独立 Docker 容器或远程机器运行",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "CUA-003",
+      "priority": "P1",
+      "requirement": "Worker 只能经 Gateway 签发的短期、范围受限凭据受理作业；强认证，允许注册/停用/吊销",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "CUA-004",
+      "priority": "P1",
+      "requirement": "支持 navigate, snapshot, locate, click, type, select, scroll, upload, download 和截图；操作有超时、步数限制",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "CUA-005",
+      "priority": "P1",
+      "requirement": "策略优先 API/MCP，只有可用 API 不满足工作需要时才选浏览器；记录选择理由与失败降级",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "CUA-006",
+      "priority": "P1",
+      "requirement": "支持在 Web 查看只读实时画面、DOM/截图记录、动作时间线、停止与人工接管",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "CUA-007",
+      "priority": "P1",
+      "requirement": "可保存**非秘密**的浏览器会话标识/运行检查点；登录凭据或 Cookie 持久化需单独加密、授权、时效与隔离策略",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "CUA-008",
+      "priority": "P1",
+      "requirement": "登录使用安全交互：用户在受控会话里亲自完成；凭据不经聊天和 LLM 上下文传递",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "CUA-009",
+      "priority": "P1",
+      "requirement": "**浏览器安全边界**：默认拒绝 localhost、容器元数据、RFC1918/LAN 目标、文件协议与内网 DNS 重绑定；对家庭内网访问另建逐目标授权 Worker",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "CUA-010",
+      "priority": "P1",
+      "requirement": "对发送、发布、购买、删除、权限更改、下载执行等设高危审批；独立策略引擎在模型外判定",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "CUA-011",
+      "priority": "P1",
+      "requirement": "任务结束时返回结构化产物、截图/文件引用、操作轨迹与结果核验，不靠 LLM“我做完了”自述",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "CUA-012",
+      "priority": "P1",
+      "requirement": "Worker 资源配额：CPU/RAM、浏览器实例、并发会话、总步数、单任务时长；超限可取消和回收",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "CUA-013",
+      "priority": "P1",
+      "requirement": "支持用户中途 pause/takeover/resume/cancel；Agent 恢复后必须重新确认页面状态和待执行动作",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "CUA-014",
+      "priority": "P1",
+      "requirement": "Worker 发生不确定外部副作用时暂停，记录 UNCERTAIN，不盲目重复点击“提交”",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "CUA-015",
+      "priority": "P2",
+      "requirement": "可选远端完整 Desktop Worker（Linux 图形桌面，或显式授权的 Mac/PC 节点）；与浏览器工具共享审批机制",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "CUA-016",
+      "priority": "P2",
+      "requirement": "可选独立凭据库/Vault 和登录会话隔离（逐身份/Worker），支持撤销与轮换",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "BOT-001",
+      "priority": "P1",
+      "requirement": "支持可命名的 Bot Profile（身份/目标/模型/Memory 作用域/连接器白名单/工具权限/预算）",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "BOT-002",
+      "priority": "P1",
+      "requirement": "通过 Web 或 IM 对 Bot 委派持久任务；每个任务有责任人 Bot、交付标准、下一次检查点",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "BOT-003",
+      "priority": "P1",
+      "requirement": "Bot 任务可由 Cron、Heartbeat、Webhook、应用事件触发，复用现有 Task Core",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "BOT-004",
+      "priority": "P1",
+      "requirement": "支持从成功任务中生成 Skill/Routine 草稿，包括步骤、权限、触发器和失败策略，用户批准才能启用",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "BOT-005",
+      "priority": "P1",
+      "requirement": "跨 Bot 委派使用 Supervisor、父子任务、预算、超时、失败升级和结果验收",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "BOT-006",
+      "priority": "P1",
+      "requirement": "通知分级：完成摘要、异常告警、审批请求；支持静默期、去重和会话关联",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "BOT-007",
+      "priority": "P1",
+      "requirement": "UI 展示 Bot 工作看板：在做什么、等待谁、占用什么工具、连接了哪些账号、花费多少",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "BOT-008",
+      "priority": "P2",
+      "requirement": "跨 Agent 工具协作与工作流模板市场（仅经过可信审核）",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "NFR-001",
+      "priority": "P0",
+      "requirement": "提供 linux/amd64、linux/arm64 多架构镜像；CI 构建与运行测试必须覆盖两架构，部署前检查目标 Docker 能力。",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`.github/workflows/containers.yml`、`docs/OPENWRT-PREFLIGHT.md`、`deploy/Dockerfile`",
+          "CI 配置 amd64/arm64 原生 runner 各自构建测试；尚无本次两架构运行收据，也未证明发布的多架构 manifest 存在。"
+        ]
+      }
+    },
+    {
+      "id": "NFR-002",
+      "priority": "P0",
+      "requirement": "不绑定 OpenWrt 特有命令；OpenWrt 只作为 Docker 宿主；宿主机管理接口单独可选。",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "已实现，待验收",
+          "`deploy/compose.yml`、`deploy/Dockerfile`、`docs/OPENWRT-PREFLIGHT.md`",
+          "以 Docker 为宿主接口；仍须目标 OpenWrt Docker 主机验证。"
+        ]
+      }
+    },
+    {
+      "id": "NFR-003",
+      "priority": "P0",
+      "requirement": "资源预算先以 **4 核 ARM64、4 GiB RAM、SSD 持久卷** 作为性能验收基准机；如实际设备不足须重新测算。软路由不能运行本地大模型。",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`docs/OPENWRT-PREFLIGHT.md`、`deploy/compose.yml`",
+          "已列资源及部署条件；4 核 ARM64、4 GiB、SSD 基准机未实测，设备不足时尚须重算。"
+        ]
+      }
+    },
+    {
+      "id": "NFR-004",
+      "priority": "P0",
+      "requirement": "空闲情况下主容器内存目标不高于 500 MiB；两个并发纯 API 文本任务内存目标不高于 1 GiB（不含浏览器/外部执行器）；测量结果记录在性能报告，无法达成须明确瓶颈与降级方案。**此为工程目标，不是已验证性能事实。**",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`src/control/maintenance.ts`、`deploy/compose.yml`",
+          "可测 RSS、容器设置 1 GiB 上限；没有本次基准机空闲和双任务峰值报告，不能视为达到目标。"
+        ]
+      }
+    },
+    {
+      "id": "NFR-005",
+      "priority": "P0",
+      "requirement": "默认并发 Agent runs ≤2、Subagents ≤0（P0 未启用）、队列长度 ≤100；全部可配置并受硬限约束。",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`src/control/server.ts`、`src/control/service.ts`；`tests/control-budgets.test.ts`",
+          "有并发及队列配置验证；需核对默认值、硬限以及所有创建入口，并证明 P0 未启用 subagent。"
+        ]
+      }
+    },
+    {
+      "id": "NFR-006",
+      "priority": "P0",
+      "requirement": "不在镜像内包含重量级浏览器依赖，Browser Worker 列为 P1 独立执行器能力，完整 Desktop Worker 列为 P2。",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "已实现，待验收",
+          "`deploy/Dockerfile`、`.github/workflows/containers.yml`",
+          "生产镜像构建未安装浏览器，浏览器只在 CI 测试 job 安装；须检查实际发布镜像依赖。"
+        ]
+      }
+    },
+    {
+      "id": "NFR-007",
+      "priority": "P0",
+      "requirement": "正常容器重启后 60 秒内恢复 API 就绪（基准机、数据量基线下）；恢复任务状态与重复事件处理通过验收测试。",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`deploy/smoke.mjs`、`tests/recovery.test.ts`、`tests/control-crash.test.ts`",
+          "存在重启与恢复测试；基准机、数据基线下 60 秒内就绪及重复事件验收无本次记录。"
+        ]
+      }
+    },
+    {
+      "id": "NFR-008",
+      "priority": "P0",
+      "requirement": "进程中断、服务重启、网络断开、模型超时均有明确异常状态与恢复策略；不能无声丢失任务。",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`src/control/service.ts`、`src/connectors/actions.ts`；`tests/recovery.test.ts`、`tests/control-crash.test.ts`",
+          "中断与不确定状态有处理；网络断开和模型超时的全部入口恢复策略需故障注入验收。"
+        ]
+      }
+    },
+    {
+      "id": "NFR-009",
+      "priority": "P0",
+      "requirement": "在外部服务可用、无宿主机故障的前提下，内部调度器测试持续运行 72 小时无任务无限积压；结果附指标。",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`scripts/control-soak.ts`、`.github/workflows/containers.yml`",
+          "CI 仅运行 15 秒合成 smoke；没有 72 小时指标与无无限积压证明。"
+        ]
+      }
+    },
+    {
+      "id": "NFR-010",
+      "priority": "P0",
+      "requirement": "单个错误工具/MCP/通道不可拖垮整个服务；超时、错误隔离、限流与断路器策略必须实现。",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`src/control/service.ts`、`src/channels`、`src/connectors`；`tests/channel-adapters.test.ts`",
+          "有超时和部分限流/错误处理；未找到完整的跨工具、MCP、通道断路器策略及隔离验收。"
+        ]
+      }
+    },
+    {
+      "id": "NFR-011",
+      "priority": "P0",
+      "requirement": "恢复备份必须有自动化全流程测试；每次 release 运行至少一次空环境恢复。",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`tests/control-operations.test.ts`、`deploy/smoke.mjs`、`.github/workflows/containers.yml`",
+          "有两库恢复测试及容器 smoke；未证实每次 release 都运行空环境全流程恢复。"
+        ]
+      }
+    },
+    {
+      "id": "NFR-012",
+      "priority": "P0",
+      "requirement": "遵循最小权限、默认拒绝、外部输入不可信、秘密最小暴露。",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`src/control/policy.ts`、`src/control/security.ts`、`deploy/compose.yml`；`tests/control-boundary.test.ts`",
+          "有默认拒绝、认证、容器限制和不可信输入测试；需覆盖所有入口、秘密路径及实际部署。"
+        ]
+      }
+    },
+    {
+      "id": "NFR-013",
+      "priority": "P0",
+      "requirement": "所有非 loopback 管理访问须认证，建议通过 VPN（如 Tailscale/WireGuard）或可信反向代理使用；不得默认暴露公网。",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`deploy/compose.yml`、`src/control/server.ts`；`tests/control-security-extended.test.ts`",
+          "默认宿主绑定 loopback，认证由应用执行；非 loopback 实际代理、来源限制及公网暴露情况未验收。"
+        ]
+      }
+    },
+    {
+      "id": "NFR-014",
+      "priority": "P0",
+      "requirement": "凭据不能存明文于普通配置导出、审计日志、支持包；备份可选择单独加密，密钥不得与密文无保护地存放在同一导出包。",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "已实现，待验收",
+          "`src/control/operations.ts`、`src/control/maintenance.ts`；`tests/control-operations.test.ts`、`tests/control-maintenance.test.ts`",
+          "普通备份排除 secrets 和主密钥，配置导出白名单；自由文本及用户自填秘密仍需泄露注入测试。"
+        ]
+      }
+    },
+    {
+      "id": "NFR-015",
+      "priority": "P0",
+      "requirement": "文件上传做类型检查、大小配额、保存路径固定、文件名规范化、下载鉴权。",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`src/control/artifacts.ts`、`src/control/server.ts`；`tests/control-artifacts.test.ts`",
+          "有受管工件与认证接口；须逐项验证类型、配额、规范化名称、固定位置及下载鉴权，包括迁移上传。"
+        ]
+      }
+    },
+    {
+      "id": "NFR-016",
+      "priority": "P0",
+      "requirement": "依赖漏洞扫描、容器漏洞扫描、Secret 扫描进入 CI；高危项必须有修复或书面风险接受记录。",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "已实现，待验收",
+          "`.github/workflows/containers.yml` 的 native 与 secrets jobs",
+          "CI 配置 npm audit、Trivy 高危扫描，以及 `gitleaks:v8.24.3` Secret 扫描；本次未运行 CI，也未核实高危项的实际处理或书面风险接受记录。"
+        ]
+      }
+    },
+    {
+      "id": "NFR-021",
+      "priority": "P0",
+      "requirement": "迁移必须支持离线备份包的大小配额、解压炸弹检测、路径规范化、符号链接阻止、压缩文件条目计数和 SHA-256 校验；禁止在应用容器内执行来源脚本。",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "已实现，待验收",
+          "`src/migrations/source.ts`、`src/migrations/index.ts`；`tests/migrations-source.test.ts`",
+          "有配额、路径、链接、ZIP 检查和哈希；须运行恶意包 MT-005 并确认部署环境不执行来源脚本。"
+        ]
+      }
+    },
+    {
+      "id": "NFR-022",
+      "priority": "P0",
+      "requirement": "导入输出包含字段级兼容性报告、未迁移清单、时间戳和数据量；不得静默丢弃重要字段。",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`src/migrations/importers.ts`、`src/migrations/core.ts`；`tests/migrations-importers.test.ts`",
+          "有警告、计数和未映射报告；尚不能证明所有重要字段均有字段级兼容性报告。"
+        ]
+      }
+    },
+    {
+      "id": "NFR-023",
+      "priority": "P0",
+      "requirement": "OAuth 秘密使用 AES-256-GCM 或等价 AEAD 加密，并制定独立于普通数据库备份的主密钥托管与轮换方案；避免与加密数据无保护地同处一份导出。",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`src/control/store.ts`、`src/connectors/oauth.ts`；`tests/connectors-oauth.test.ts`",
+          "secrets 使用 AES-256-GCM，普通备份排除秘密和密钥；独立主密钥托管及轮换的完整运行方案尚需验证。"
+        ]
+      }
+    },
+    {
+      "id": "NFR-024",
+      "priority": "P0",
+      "requirement": "邮箱外发审计不得无条件持久化正文；默认保存经脱敏的收件人、摘要、邮件哈希和平台 ID，完整正文保留可配置。",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "已实现，待验收",
+          "`src/control/apps.ts`、`src/connectors/actions.ts`；`tests/control-apps-http.test.ts`",
+          "意图摘要脱敏、正文在加密 secrets 中并按配置清理，默认终态零天；需验证所有审计/日志及真实发送路径不泄露正文。"
+        ]
+      }
+    },
+    {
+      "id": "NFR-025",
+      "priority": "P1",
+      "requirement": "Browser Worker 与主容器处于可控网络边界，默认不能访问路由器管理 IP、Docker socket、存储卷和元数据端点；通过 e2e 测试证明。",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "NFR-026",
+      "priority": "P1",
+      "requirement": "Browser Worker 峰值资源、网络出口、运行时间须独立配置和测量；主服务在 Worker 故障时仍可正常聊天、调度及审查。",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "NFR-027",
+      "priority": "P1",
+      "requirement": "Computer Use 观察流必须认证、短期令牌且可撤销；截图、视频、网页正文作为敏感工件设置保留期和脱敏/删除。",
+      "status": "TODO",
+      "notes": "后续独立里程碑；本轮P0审计未推定交付。"
+    },
+    {
+      "id": "NFR-017",
+      "priority": "P0",
+      "requirement": "首次部署主要功能可通过 Web 配置，不要求用户手写数据库 SQL 或改 TS 源码。",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`apps/web/src`、`src/control/server.ts`；`tests/browser/v11-flows.spec.ts`",
+          "有设置、迁移和连接界面；首次空卷配置所有主要功能仍需 AT-001 验证。"
+        ]
+      }
+    },
+    {
+      "id": "NFR-018",
+      "priority": "P0",
+      "requirement": "所有后台功能有 OpenAPI、运行说明、故障排查、数据迁移指南和升级回滚步骤。",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`docs/openapi.json`、`docs/OPERATIONS.md`、`docs/MIGRATION-COMPATIBILITY.md`",
+          "有 API、运维及迁移文档；尚未逐路由确认 OpenAPI 覆盖，升级回滚与故障排查是否覆盖所有功能。"
+        ]
+      }
+    },
+    {
+      "id": "NFR-019",
+      "priority": "P0",
+      "requirement": "日志足以关联 IM event -> Task -> Pi conversation/run -> Tool call -> Delivery。",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`src/control/main.ts`、`src/control/maintenance.ts`、`src/control/store.ts`",
+          "有事件、任务及审计记录；未证实日志可完整关联 IM event → Task → Pi run → Tool → Delivery。"
+        ]
+      }
+    },
+    {
+      "id": "NFR-020",
+      "priority": "P0",
+      "requirement": "前端关键页面有桌面/手机基本布局；核心操作在宽度约 390 px 浏览器上可用。",
+      "audit": {
+        "document": "docs/P0-SECURITY-AUDIT.md",
+        "assessment": [
+          "部分",
+          "`tests/browser/v11.spec.ts`、`tests/browser/v11-flows.spec.ts`、`apps/web/src`",
+          "有浏览器测试；本次未运行 390px 全核心操作与桌面布局验收。"
+        ]
+      }
+    }
+  ],
+  "verifiedCodeCommit": "c6b43dbe2163b0dd83fcf240a53f58ff4856b603",
+  "verification": "docs/P0-VERIFICATION.md",
+  "acceptance": "docs/acceptance-results.json"
+}
