@@ -2,7 +2,41 @@
 
 本记录区分静态审计、自动化运行和外部验收。当前基线为 v1.1。真实 Google、Telegram、外部模型、完整来源备份、OpenWrt 和 72 小时实验未验收。
 
-## 已观察到的运行
+## 连接测试地址缺陷修复
+
+发现“测试连接”写死请求`https://api.openai.com/v1/models`，未使用配置的`baseUrl`，导致自定义代理的密钥被发往OpenAI官方并误报凭据无效。现按`baseUrl`拼接`/models`；401/403记为凭据无效，404/405记为“地址可达但无模型列表接口”，其他失败记为不可用。新增`tests/provider-test-endpoint.test.ts`核对请求路径与Bearer头，浏览器测试同时断言上游只收到`/v1/models`。本轮`npm run test:all`通过：62个后端文件315项、22项浏览器测试。
+
+## 面向用户的呈现整改
+
+连接测试原始返回、任务详情、系统页、审批、迁移与记忆审核此前直接显示内部状态码、英文键名和JSON。现已统一：状态与错误映射为中文结论；原始数据放入默认折叠的“技术详情”；接口错误消息不再回显代码。新增`tests/presentation.test.ts`与`tests/browser/presentation.spec.ts`，验证连接测试显示中文、原始`invalid_credentials`仅在展开后可见。本轮`npm run test:all`通过：61个后端文件314项、22项浏览器测试。
+
+## 自定义模型 ID 与未知价格补验
+
+已移除自定义地址对内置于OpenAI目录的模型白名单依赖：填写API地址时，模型ID按原样发送给兼容服务，可用`vendor/team-model:latest`等目录外名称。留空API地址时仍使用官方接口并要求目录内ID，避免拼写错误被当作可用模型。自定义模型未填上限时使用上下文32768与输出4096，可在模型设置中调整；输出不得超过上下文。
+
+未知价格的模型不再套用其他模型价格。Token上限继续生效；一旦配置金额预算，任务以`BUDGET_PRICE_UNKNOWN`失败并给出具体原因，填写每百万Token输入/输出单价后才按该单价估算。此前金额预算失败只显示笼统的`MODEL_OR_BUDGET_FAILURE`，现已保留具体原因。
+
+本轮`tests/provider-endpoint.test.ts`用本地兼容服务真实发送非目录模型请求，核对`/chat/completions`路径、Bearer认证、模型名与历史；并验证未知价格在Token预算下成功且标记`costUnknown`、在金额预算下明确失败、无地址的目录外模型被拒绝、配置重启后保留。生产Compose+Chromium验证使用`vendor/custom-model`完成真实聊天，日志：`/var/folders/7_/k830hyb566b3386880csl8900000gn/T/pi-fabric-shell-8LZfCY/output.log`。仍未使用真实代理密钥或对其模型目录作无依据推断。该补验后完整门禁为60个后端文件、312项测试及20项浏览器测试通过。
+
+## 自定义 OpenAI 兼容地址补验
+
+已将提供商类型与`baseUrl`分离。首次设置和模型编辑均可配置API基础地址；留空保持官方接口，清空已保存地址可切回官方接口。自定义地址使用Chat Completions协议；该次补验时仍限定内置OpenAI模型ID，后续补验已移除该限制并处理未知价格。未宣称支持任意协议或代理的真实价格。地址不接受URL内凭据、查询参数、片段及非HTTPS协议；仅回环HTTP用于明确配置的本地服务。所有配置在写入Owner、提供商或密钥之前校验，错误不会留下半初始化状态。
+
+本轮`npm run test:all`通过：60文件311项后端、20项浏览器及原有事件/HTTP/类型/构建检查。`tests/provider-endpoint.test.ts`执行真实本地HTTP/SSE请求，核对URL、Bearer认证、模型ID及会话历史，并验证配置重启恢复、清空地址和无效配置回滚。完整日志：`/var/folders/7_/k830hyb566b3386880csl8900000gn/T/pi-fabric-shell-W4YUhy/output.log`。
+
+`orangeorange/hda:local-provider-fix`的生产Compose+Chromium验证通过，包括真实浏览器聊天经容器内本地兼容服务返回回复，随后重启和桌面/手机重新登录。日志：`/var/folders/7_/k830hyb566b3386880csl8900000gn/T/pi-fabric-shell-1WNqkb/output.log`。本机8787实例已更新并通过实际页面验证，数据卷保留。未使用真实密钥请求用户服务。本轮未重跑AMD64、完整Linux probe和安全扫描；下方保留历史验证范围。
+
+## 本地首次配置修复补验
+
+针对本地Docker试用反馈，已在实际页面复现：短于12字符的初始化密码返回`INVALID_CREDENTIALS`，页面缺少约束提示。另在失败路径中复现错误重绘清空表单、退出后旧刷新覆盖登录错误的问题。现已增加`WEAK_PASSWORD`、前端最小长度及中文提示，稳定表单初始值，并阻止退出后的旧刷新更新状态。未获得用户当时的请求内容，因此不把该复现条件视为其原始请求的确定输入。
+
+当前本地`npm run test:all`通过：59文件309项后端、20项桌面/手机浏览器、3项事件、HTTP客户端契约、类型检查及前后端构建。运行日志：`/var/folders/7_/k830hyb566b3386880csl8900000gn/T/pi-fabric-shell-g2LahS/output.log`。
+
+`HDA_TEST_IMAGE=orangeorange/hda:local-auth-fix node deploy/compose-smoke.mjs`通过。脚本现在使用真实Chromium操作生产Compose容器，覆盖短密码拦截、服务端拒绝、保留输入并重试、首次配置、重启保留会话、桌面/手机退出及错误密码后重新登录。测试使用独立卷与随机本机端口，结束后清理；没有调用真实模型、Gmail或Telegram。运行日志：`/var/folders/7_/k830hyb566b3386880csl8900000gn/T/pi-fabric-shell-cmIjRD/output.log`。
+
+本机`orangeorange-local`已更新到该镜像并通过健康及实际页面验证，原数据卷保留。未设置用户的管理员凭据。运行Compose浏览器测试前，宿主需要`npm ci`和`npx playwright install chromium`；CI另安装Chromium系统依赖。本轮没有重跑完整Linux probe、AMD64或安全扫描。以下表格与后续原记录保留为修复前证据，不代表本轮全部重验。
+
+## 修复前已观察到的运行
 
 | 检查 | 结果与范围 |
 |---|---|
