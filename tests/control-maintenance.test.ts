@@ -51,3 +51,11 @@ describe('persistent maintenance',()=>{
   });
   it('rejects unsafe retention policy and symlink snapshot directory',()=>{const {s,m,dir}=fixture();s.setSetting('retentionDays',0);expect(()=>m.retention()).toThrow('INVALID_RETENTION_DAYS');const other=mkdtempSync(join(tmpdir(),'hda-other-'));dirs.push(other);symlinkSync(other,join(dir,'audit-snapshots'));expect(()=>m.rotateAudit()).toThrow('UNSAFE_AUDIT_DIRECTORY');});
 });
+
+it('OPS-002 measures confirmed IM delivery latency from retained timestamps',async()=>{
+ const {s,m}=fixture();
+ s.put('tasks','im',{id:'im',source:'telegram',createdAt:100,status:'SUCCEEDED'});
+ s.put('outbox','sent',{id:'sent',taskId:'im',state:'SENT',sentAt:600});
+ s.put('outbox','uncertain',{id:'uncertain',taskId:'im',state:'DELIVERY_UNCERTAIN',sentAt:900});
+ expect((await m.metrics()).imLatencyMs).toBe(500);
+});

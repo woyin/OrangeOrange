@@ -841,7 +841,7 @@ function collectSkills(files: NormalizedFiles, warnings: WarningCollector): Skil
   return skills;
 }
 
-const CRON_SAFE_FIELDS = ["id", "name", "description", "enabled", "schedule", "prompt", "timezone"] as const;
+const CRON_SAFE_FIELDS = ["id", "name", "description", "enabled", "schedule", "prompt", "timezone", "runMode", "targetChannel", "requiredCapabilities", "delivery"] as const;
 
 function parseCronStore(
   files: NormalizedFiles,
@@ -882,9 +882,11 @@ function parseCronStore(
     const item: MigrationItem = { sourceId: `cron:${id}`, type: "cron", content };
     for (const field of CRON_SAFE_FIELDS) {
       const value=job[field];
-      if(field==="schedule" && value && typeof value==="object" && !Array.isArray(value)){
+      if(field==="requiredCapabilities" && Array.isArray(value) && value.every(v=>typeof v==='string')){content[field]=value.map(v=>applyRedaction(capText(v,item,counters),item,counters));}
+      else if(field==="delivery" && value && typeof value==='object' && !Array.isArray(value)){const delivery=value as Record<string,unknown>, safe:Record<string,unknown>={};for(const key of ['channel','platform'])if(typeof delivery[key]==='string')safe[key]=applyRedaction(capText(delivery[key] as string,item,counters),item,counters);content.delivery=safe;const omitted=Object.keys(delivery).filter(k=>!(k in safe));if(omitted.length)item.warnings=[...(item.warnings??[]),...omitted.map(k=>`cron_field_omitted:delivery.${k}`)];}
+      else if(field==="schedule" && value && typeof value==="object" && !Array.isArray(value)){
         const schedule=value as Record<string,unknown>, safe:Record<string,unknown>={};
-        for(const key of ["kind","expr","tz","at","everyMs","anchorMs"]){const v=schedule[key];if(typeof v==="string")safe[key]=applyRedaction(capText(v,item,counters),item,counters);else if(typeof v==="number"&&Number.isFinite(v))safe[key]=v;}
+        for(const key of ["kind","expr","tz","timezone","at","everyMs","anchorMs"]){const v=schedule[key];if(typeof v==="string")safe[key]=applyRedaction(capText(v,item,counters),item,counters);else if(typeof v==="number"&&Number.isFinite(v))safe[key]=v;}
         const omittedSchedule=Object.keys(schedule).filter(k=>!(k in safe));if(omittedSchedule.length)item.warnings=[...(item.warnings??[]),...omittedSchedule.map(k=>`cron_field_omitted:schedule.${k}`)];
         content.schedule=safe;
       } else if(typeof value==="string")content[field]=applyRedaction(capText(value,item,counters),item,counters);

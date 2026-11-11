@@ -8,6 +8,8 @@ export type Inbound = {
   text: string;
   timestamp: number;
   contextToken?: string;
+  messageThreadId?: string;
+  messageId?: string;
 };
 export type Route = {
   key: string;
@@ -19,6 +21,8 @@ export type Route = {
   conversationId: number;
   contextToken: string;
   lastInboundAt: number;
+  messageThreadId?: string;
+  replyToMessageId?: string;
 };
 export type SendResult = { id: string };
 export type Adapter = {
@@ -37,6 +41,13 @@ export type Adapter = {
     operationId: string,
     signal: AbortSignal,
   ) => Promise<SendResult>;
+};
+export type ChannelAdapter = Adapter & {
+  connect: (signal: AbortSignal) => Promise<void>;
+  health: (signal: AbortSignal) => Promise<boolean>;
+  normalizeInbound: (update: unknown) => Inbound | null;
+  edit: (route: Route, messageId: string, text: string, signal: AbortSignal) => Promise<SendResult>;
+  stop: () => void;
 };
 export class SendFailure extends Error {
   constructor(

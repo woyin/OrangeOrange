@@ -100,12 +100,7 @@ export async function startControlServer(options: ServerOptions) {
                 const b = await body(req);
                 if (route === 'setup') {
                     fields(b, ['username', 'password', 'timezone', 'provider', 'telegram']);
-                    service.requireWrite();
-                    service.auth.setup({ username: string(b.username, 100), password: string(b.password, 1024), timezone: string(b.timezone, 100) });
-                    if (b.provider)
-                        await service.provider({ ...b.provider, name: '主模型' });
-                    if (b.telegram)
-                        service.channel({ type: 'telegram', name: 'Telegram', token: b.telegram.token, allowedUsers: b.telegram.allowedUsers, enabled: true });
+                    await service.setup(b);
                 }
                 else
                     fields(b, ['username', 'password']);
@@ -294,6 +289,8 @@ export async function startControlServer(options: ServerOptions) {
                 }
                 if (['system/summary', 'system', 'summary'].includes(route) && method === 'GET')
                     return service.summary();
+                if (route === 'settings/history' && method === 'GET') return {items:service.list('prompt_revisions').sort((a,b)=>b.version-a.version)};
+                if (route === 'memories/export' && method === 'GET') return {version:1,exportedAt:new Date().toISOString(),items:service.list('memories')};
                 if (route === 'settings') {
                     if (method === 'GET')
                         return service.store.setting('config', {});
@@ -365,7 +362,7 @@ export async function startControlServer(options: ServerOptions) {
                         return service.taskAction(id, string(b.action, 30));
                     }
                     if (method === 'GET')
-                        return { ...service.get('tasks', id), actionIntents: service.list('gmail_intents').filter(i => i.taskId === id), steps: service.list('task_steps').filter(s => s.taskId === id), operations: service.list('operations').filter(s => s.taskId === id), deliveries: service.list('outbox').filter(s => s.taskId === id) };
+                        return { ...service.get('tasks', id), actionIntents: service.list('gmail_intents').filter(i => i.taskId === id), approvals: service.list('approvals').filter(a => a.taskId === id), steps: service.list('task_steps').filter(s => s.taskId === id), operations: service.list('operations').filter(s => s.taskId === id), deliveries: service.list('outbox').filter(s => s.taskId === id) };
                 }
                 if (resource === 'schedules') {
                     if (id === 'preview' && method === 'GET')
@@ -385,6 +382,16 @@ export async function startControlServer(options: ServerOptions) {
                             throw new ApiError(400, 'INVALID_ACTION');
                         service.store.put('schedules', id, { ...s, enabled: b.action === 'resume' });
                         return service.get('schedules', id);
+                    }
+                }
+                if (resource === 'heartbeats' && id) {
+                    const heartbeat=service.get('heartbeats',id);
+                    if(sub==='history'&&method==='GET')return {items:service.list('tasks').filter(t=>t.heartbeatId===id),nextCursor:null};
+                    if(sub==='actions'&&method==='POST') {
+                        fields(b,['action']);
+                        if(b.action==='run')return service.createTask(heartbeat.conversationId,heartbeat.prompt,'heartbeat',randomUUID(),{heartbeatId:id,channelId:heartbeat.channelId,threadId:heartbeat.threadId});
+                        if(!['pause','resume'].includes(b.action))throw new ApiError(400,'INVALID_ACTION');
+                        const value={...heartbeat,enabled:b.action==='resume'};service.store.put('heartbeats',id,value);return value;
                     }
                 }
                 if (resource === 'heartbeats' && ['POST', 'PATCH'].includes(method))
@@ -490,7 +497,7 @@ export async function startControlServer(options: ServerOptions) {
                         if (resource === 'providers')
                             items = items.map(p => ({ ...p, configured: !!service.store.getSecret(`provider:${p.id}`) }));
                         if (resource === 'tasks')
-                            for (const k of ['status', 'source'])
+                            for (const k of ['status', 'source', 'conversationId'])
                                 if (url.searchParams.has(k))
                                     items = items.filter(t => t[k] === url.searchParams.get(k));
                         return { items, nextCursor: null };

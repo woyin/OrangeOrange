@@ -92,8 +92,11 @@ export class MaintenanceService {
     this.hooks.onProtection?.(diskLow);
     let dbBytes:number|null=null;
     try {dbBytes=statSync(s.dbPath).size;for(const suffix of ['-wal','-shm']){try{dbBytes+=statSync(s.dbPath+suffix).size;}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}}}catch{dbBytes=null;}
+    const taskById=new Map(tasks.map(t=>[t.id,t]));
+    const latencies=out.filter(o=>status(o)==='SENT'&&taskById.get(o.taskId)?.source==='telegram').map(o=>({at:time(o.sentAt),duration:time(o.sentAt)-time(taskById.get(o.taskId)?.createdAt)})).filter(v=>Number.isFinite(v.at)&&Number.isFinite(v.duration)&&v.duration>=0).sort((a,b)=>b.at-a.at).slice(0,100);
+    const imLatencyMs=latencies.length?latencies.reduce((sum,v)=>sum+v.duration,0)/latencies.length:null;
     const cpu=process.cpuUsage();const done=tasks.filter(t=>terminal.has(t.status)).length;const failed=tasks.filter(t=>t.status==='FAILED').length;
-    return {rss:process.memoryUsage().rss,cpuUserMicros:cpu.user,cpuSystemMicros:cpu.system,uptimeSeconds:process.uptime(),disk,diskLow,diskProbeAvailable:disk!==null,dbBytes,runningTasks:tasks.filter(t=>t.status==='RUNNING').length,queueDepth:tasks.filter(t=>['CREATED','QUEUED','RETRY_WAIT'].includes(t.status)).length,failedTasks:failed,terminalTasks:done,failureRate:done?failed/done:null,pendingOutbox:out.filter(o=>!['SENT','FAILED','CANCELLED'].includes(status(o))).length,uncertainOperations:s.list<RecordData>('operations').filter(o=>['SENDING','UNCERTAIN'].includes(status(o))).length,modelErrors:s.list<RecordData>('model_usage').filter(u=>u.errorCode||u.status==='FAILED').length,imLatencyMs:null};
+    return {rss:process.memoryUsage().rss,cpuUserMicros:cpu.user,cpuSystemMicros:cpu.system,uptimeSeconds:process.uptime(),disk,diskLow,diskProbeAvailable:disk!==null,dbBytes,runningTasks:tasks.filter(t=>t.status==='RUNNING').length,queueDepth:tasks.filter(t=>['CREATED','QUEUED','RETRY_WAIT'].includes(t.status)).length,failedTasks:failed,terminalTasks:done,failureRate:done?failed/done:null,pendingOutbox:out.filter(o=>!['SENT','FAILED','CANCELLED'].includes(status(o))).length,uncertainOperations:s.list<RecordData>('operations').filter(o=>['SENDING','UNCERTAIN'].includes(status(o))).length,modelErrors:s.list<RecordData>('model_usage').filter(u=>u.errorCode||u.status==='FAILED').length,imLatencyMs};
   }
   exportConfig():object {
     const s=this.getStore();const c=s.setting<RecordData>('config',{});

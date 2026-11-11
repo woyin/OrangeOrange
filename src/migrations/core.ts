@@ -3,7 +3,7 @@ import type { ControlStore } from '../control/store.js';
 
 export type ConflictChoice = { strategy:'keep'|'new'|'manualmerge'; content?:unknown };
 export interface MigrationItem { sourceId:string; type:string; content:unknown; sourceTime?:string|number; warnings?:string[] }
-export interface MigrationInventory { system:'openclaw'|'hermes'; instanceId:string; version:string; items:MigrationItem[]; warnings:string[]; manifestHash?:string; summary?:{files:number; bytes:number; indexed:number; assets:number; reauthorization:number; unmapped:number} }
+export interface MigrationInventory { system:'openclaw'|'hermes'; instanceId:string; version:string; sourceVersion?:string|null; formatVersion?:string; items:MigrationItem[]; warnings:string[]; manifestHash?:string; summary?:{files:number; bytes:number; indexed:number; assets:number; reauthorization:number; unmapped:number} }
 export interface PlanItem extends MigrationItem { sourceHash:string; targetId:string; status:'new'|'unchanged'|'conflict'; choice:ConflictChoice; priorHash?:string }
 export interface MigrationPlan { id:string; inventory:Omit<MigrationInventory,'items'>; items:PlanItem[]; hash:string }
 export interface MigrationBatch { id:string; plan:MigrationPlan; state:'STAGED'|'COMPLETED'|'ROLLED_BACK'; createdAt:number; finishedAt?:number; created:{id:string; hash:string; kind?:string}[] }
@@ -39,7 +39,7 @@ export class MigrationEngine {
       if(status==='conflict'&&choice.strategy==='manualmerge'&&choice.content===undefined) throw new Error('MIGRATION_MERGE_CONTENT_REQUIRED');
       return {...item,sourceHash,targetId:same?.id??randomUUID(),status,choice,...(prior?{priorHash:digest(prior)}:{})};
     });
-    const p={id:randomUUID(),inventory:{system:inventory.system,instanceId:inventory.instanceId,version:inventory.version,warnings:inventory.warnings,manifestHash:inventory.manifestHash,summary:inventory.summary},items};
+    const p={id:randomUUID(),inventory:{system:inventory.system,instanceId:inventory.instanceId,version:inventory.version,sourceVersion:inventory.sourceVersion,formatVersion:inventory.formatVersion,warnings:inventory.warnings,manifestHash:inventory.manifestHash,summary:inventory.summary},items};
     return {...p,hash:planHash(p)};
   }
   stage(plan:MigrationPlan):MigrationBatch {
@@ -122,7 +122,7 @@ export class MigrationEngine {
     const object=this.store.get<StoredObject>(OBJECTS,objectId);if(!object||!['skill','cron'].includes(object.type))throw new Error('MIGRATION_DRAFT_NOT_FOUND');
     const toolMap=options.toolMap??{};for(const [source,target] of Object.entries(toolMap))if(!source||typeof target!=='string'||!target)throw new Error('MIGRATION_INVALID_TOOL_MAP');
     const source=object.content && typeof object.content==='object'?object.content as Record<string,unknown>:{};const missing:string[]=[];let draft:Record<string,unknown>;
-    if(object.type==='cron'){const schedule=source.schedule&&typeof source.schedule==='object'?source.schedule as Record<string,unknown>:{};const expression=typeof schedule.expr==='string'?schedule.expr:typeof source.schedule==='string'?source.schedule:typeof source.expression==='string'?source.expression:undefined;const timezone=typeof source.timezone==='string'?source.timezone:typeof schedule.tz==='string'?schedule.tz:undefined;draft={name:source.name,expression,timezone,prompt:source.prompt,enabled:false};for(const field of ['name','expression','timezone','prompt'])if(typeof draft[field]!=='string'||!draft[field])missing.push(field);}
+    if(object.type==='cron'){const schedule=source.schedule&&typeof source.schedule==='object'?source.schedule as Record<string,unknown>:{};const expression=typeof schedule.expr==='string'?schedule.expr:typeof source.schedule==='string'?source.schedule:typeof source.expression==='string'?source.expression:undefined;const timezone=typeof source.timezone==='string'?source.timezone:typeof schedule.tz==='string'?schedule.tz:typeof schedule.timezone==='string'?schedule.timezone:undefined;const delivery=source.delivery&&typeof source.delivery==='object'?source.delivery as Record<string,unknown>:{};const targetChannel=source.targetChannel??delivery.channel??delivery.platform;draft={name:source.name,expression,timezone,prompt:source.prompt,runMode:source.runMode,targetChannel,requiredCapabilities:source.requiredCapabilities,enabled:false};for(const field of ['name','expression','timezone','prompt','runMode','targetChannel'])if(typeof draft[field]!=='string'||!draft[field])missing.push(field);if(!Array.isArray(draft.requiredCapabilities)||!draft.requiredCapabilities.every(v=>typeof v==='string'&&v.length>0))missing.push('requiredCapabilities');}
     else {const declared=Array.isArray(source.requiredTools)?source.requiredTools:options.requiredTools;const tools=declared?.filter((v):v is string=>typeof v==='string')??[];if(!declared)missing.push('requiredTools');for(const name of tools)if(!toolMap[name])missing.push(`toolMap:${name}`);draft={name:source.name,requiredTools:tools,toolMap,enabled:false};}
     return {type:object.type as 'skill'|'cron',source:object.content,sourceId:objectId,trust:'untrusted',enabled:false,reviewRequired:true,toolMap,draft,missing};
   }

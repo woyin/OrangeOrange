@@ -1,5 +1,5 @@
 import type { ControlStore } from '../control/store.js';
-import { MigrationEngine, type MigrationInventory } from './core.js';
+import { MigrationEngine, type MigrationInventory, type MigrationPlan, type MigrationBatch, type VerificationReport, type RollbackReport } from './core.js';
 import { openMigrationSource } from './source.js';
 import { parseOpenClaw, parseHermes } from './importers.js';
 
@@ -8,10 +8,26 @@ export { compatibilityMatrix } from './compatibility.js';
 export type { CompatibilityEntry } from './compatibility.js';
 export type MigrationSourceInput = ({ system:'openclaw'|'hermes'; instanceId:string } & ({archive:Buffer;directory?:never;workspace?:never}|{archive?:never;directory:string;workspace?:string}));
 export interface MigrationServiceOptions { readonlyRoots:readonly string[] }
+export interface SourceImporter {
+  probe(input:MigrationSourceInput):Promise<MigrationInventory>;
+  inventory(input:MigrationSourceInput):Promise<MigrationInventory>;
+  validate(inventory:MigrationInventory):void;
+  plan(inventory:MigrationInventory):MigrationPlan;
+  stage(plan:MigrationPlan):MigrationBatch;
+  apply(id:string,approvedPlanHash:string):MigrationBatch;
+  verify(id:string):VerificationReport;
+  rollback(id:string):RollbackReport;
+}
 
 /** 目录来源只允许部署时配置的只读挂载；上传 ZIP 不访问宿主路径。 */
-export class MigrationService extends MigrationEngine {
+export class MigrationService extends MigrationEngine implements SourceImporter {
   constructor(store:ControlStore, private readonly options:MigrationServiceOptions){super(store);}
+  probe(input:MigrationSourceInput):Promise<MigrationInventory> {return this.scan(input);}
+  inventory(input:MigrationSourceInput):Promise<MigrationInventory> {return this.scan(input);}
+  validate(inventory:MigrationInventory):void {
+    if(!['openclaw','hermes'].includes(inventory.system)||!inventory.instanceId||!inventory.version)throw new Error('MIGRATION_SOURCE_ID_REQUIRED');
+    const seen=new Set<string>();for(const item of inventory.items){const key=JSON.stringify([item.type,item.sourceId]);if(!item.type||!item.sourceId||seen.has(key))throw new Error('MIGRATION_DUPLICATE_SOURCE_ID');seen.add(key);}
+  }
   async scan(input:MigrationSourceInput):Promise<MigrationInventory> {
     if(!input.instanceId||input.instanceId.length>200)throw new Error('MIGRATION_SOURCE_ID_REQUIRED');
     if(input.system!=='openclaw'&&input.system!=='hermes')throw new Error('MIGRATION_INVALID_SYSTEM');
@@ -57,7 +73,7 @@ export class MigrationService extends MigrationEngine {
     if(archives.length){parsed.warnings=parsed.warnings.filter(w=>!w.startsWith('cold_archive_body_missing:'));const missing=archives.filter(a=>!(a.content as Record<string,unknown>).bodyAvailable).length;if(missing)parsed.warnings.push(`cold_archive_body_missing:${missing}`);}
     for(const skill of parsed.items.filter(i=>i.type==='skill')){const content=skill.content as Record<string,unknown>;const base=typeof content.path==='string'?content.path.replace(/[^/]+$/,''):'';if(base)content.files=fileItems.filter(i=>i.type==='file_inventory'&&String((i.content as Record<string,unknown>).path).startsWith(base)).map(i=>i.content);}
     const summary={files:source.entries.filter(e=>e.kind==='file').length,bytes:source.totalBytes,indexed:fileItems.filter(i=>i.type==='file_inventory').length,assets:fileItems.filter(i=>i.type==='attachment').length,reauthorization:skippedSecrets.length,unmapped:fileItems.filter(i=>i.type==='file_inventory'&&(i.content as Record<string,unknown>).status==='not_mapped').length};
-    const inventory:MigrationInventory={...parsed,summary,manifestHash:source.manifestHash,items:[...parsed.items,...fileItems],warnings:[...parsed.warnings,...skippedSecrets.map(path=>`reauthorization_required:${path}`),...source.warnings.map(w=>`${w.code}:${w.mount}:${w.path}`)]};
+    const inventory:MigrationInventory={...parsed,sourceVersion:null,formatVersion:parsed.version,summary,manifestHash:source.manifestHash,items:[...parsed.items,...fileItems],warnings:[...parsed.warnings,...skippedSecrets.map(path=>`reauthorization_required:${path}`),...source.warnings.map(w=>`${w.code}:${w.mount}:${w.path}`)]};
     // 扫描只返回脱敏清单；来源元数据由 stage 与批次一起事务保存。
     return inventory;
   }

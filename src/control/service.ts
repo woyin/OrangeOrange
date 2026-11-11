@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { mkdir, statfs, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { backup, DatabaseSync } from 'node:sqlite';
@@ -19,6 +20,7 @@ import { PiAdapter, type RuntimeOptions } from '../pi-adapter.js';
 import { config } from '../config.js';
 import { telegramAdapter } from '../channels/telegram.js';
 import { chunks, SendFailure, type Inbound } from '../channels/types.js';
+const appPackage=JSON.parse(readFileSync(new URL('../../package.json',import.meta.url),'utf8'));
 export class ApiError extends Error {
     constructor(public status: number, public code: string, message = code) { super(message); }
 }
@@ -331,6 +333,10 @@ export class ControlService {
             approval = this.list('approvals').find(a => a.operationHash === decision.operationHash && a.status === 'APPROVED') as Approval | undefined;
             if (!approval) {
                 approval = this.policy.requestApproval(input);
+                if(task.channelId) {
+                    const id=`approval:${approval.id}`;
+                    if(!this.store.get('outbox',id))this.store.put('outbox',id,{id,dedupe_key:id,taskId:task.id,channelId:task.channelId,threadId:task.threadId,recipientUserId:task.recipientUserId,messageThreadId:task.messageThreadId,replyToMessageId:task.replyToMessageId,content:`任务需要管理员审批。请登录管理台的审批页面核对操作。审批编号：${approval.id}；到期时间：${new Date(approval.expiresAt).toISOString()}。本消息不授予操作权限。`,state:'PENDING',attempts:0,nextRetryAt:0,approvalExpiresAt:approval.expiresAt});
+                }
                 if (task.status === 'RUNNING')
                     task = this.change(task, 'WAITING_APPROVAL');
                 while (!this.closed && !call.signal?.aborted) {
@@ -435,15 +441,17 @@ export class ControlService {
             if(retryable&&!unsafe&&t.attempt<2&&Date.now()-t.startedAt<t.budget.maxDurationMs){const providers=this.list('providers').sort((a,b)=>(a.priority??0)-(b.priority??0));const retry=this.change(t,'RETRY_WAIT','TRANSIENT_MODEL_ERROR');const attempt=t.attempt+1;this.store.put('tasks',t.id,{...retry,attempt,piSubmissionId:undefined,piRequestId:`${t.id}:attempt:${attempt}`,retryProvider:providers[Math.min(attempt,providers.length-1)],nextRetryAt:Date.now()+500*2**t.attempt+Math.floor(Math.random()*100)});this.observers.get(t.id)?.();this.observers.delete(t.id);continue;}
             const next = this.change(t, result.status === 'done' ? 'SUCCEEDED' : result.status === 'withdrawn' ? 'CANCELLED' : 'FAILED', result.status === 'unanswered' ? 'MODEL_OR_BUDGET_FAILURE' : undefined);
             const live = await this.adapter.dispatch('conversation.live', { id: this.get('conversations', t.conversationId).piConversationId });
-            this.store.put('tasks', t.id, { ...next, result: result.answerText, piUsage: live.usage, deliveryStatus: t.channelId ? 'PENDING' : 'NOT_REQUIRED' });
+            this.store.put('tasks', t.id, { ...next, result: result.answerText, piUsage: live.usage, deliveryStatus: 'NOT_REQUIRED' });
             this.store.put('model_usage', t.id, { id: t.id, taskId: t.id, conversationId: t.conversationId, usage: live.usage, at: Date.now() });
             this.observers.get(t.id)?.();
             this.observers.delete(t.id);
             if (t.channelId && result.answerText && (!(t.scheduleId || t.heartbeatId) || this.store.setting<RecordData>('config', {}).notifications !== false)) {
                 const automation = t.scheduleId ? this.store.get<RecordData>('schedules', t.scheduleId) : t.heartbeatId ? this.store.get<RecordData>('heartbeats', t.heartbeatId) : undefined;
                 const digest = hash(result.answerText);
-                if (!automation?.onlyOnChange || automation.lastResultHash !== digest)
+                if (!automation?.onlyOnChange || automation.lastResultHash !== digest) {
                     this.enqueueOutbox(t, result.answerText);
+                    this.store.put('tasks',t.id,{...this.get('tasks',t.id),deliveryStatus:'PENDING'});
+                }
                 if (automation)
                     this.store.put(t.scheduleId ? 'schedules' : 'heartbeats', automation.id, { ...automation, lastResultHash: digest });
             }
@@ -529,11 +537,21 @@ export class ControlService {
         v.expires_at = n;
         delete v.expiresAt;
     } if (v.status === 'active' && (!id || v.content !== old.content || v.category !== old.category || old.status !== 'active')) { const categories = this.memoryPolicy.assertOwnerWrite({ principalId: 'owner', scope: v.scope, content: v.content, source: v.source, kind: v.kind, category: v.category, key: v.key, confidence: v.confidence }, confirmSensitive === true); if (categories.some(c => ['health','finance','identity'].includes(c))) { v.sensitive = true; v.sensitiveApproved = true; } } this.store.put('memories', v.id, v, 'owner'); return v; }
-    async provider(body: RecordData, id?: string) { if(this.list('tasks').some(t=>['RUNNING','WAITING_APPROVAL'].includes(t.status)))throw new ApiError(409,'PROVIDER_CHANGE_REQUIRES_IDLE'); fields(body, ['name', 'vendor', 'model', 'apiKey', 'priority', 'dailyBudget', 'taskBudget']); const value: RecordData = { ...(id ? this.get('providers', id) : {}), ...body, id: id ?? randomUUID(), status: 'unverified' }; string(value.model, 100); if (value.vendor !== 'openai')
+    async setup(body:RecordData) {
+        this.requireWrite();
+        this.store.transaction(()=>{
+            this.auth.setup({username:string(body.username,100),password:string(body.password,1024),timezone:string(body.timezone,100)});
+            if(body.provider)this.saveProvider({...body.provider,name:'主模型'});
+            if(body.telegram)this.channel({type:'telegram',name:'Telegram',token:body.telegram.token,allowedUsers:body.telegram.allowedUsers,enabled:true});
+        });
+        await this.configureProviders();
+    }
+    async provider(body:RecordData,id?:string) { const value=this.saveProvider(body,id);await this.configureProviders();return {...value,configured:!!this.store.getSecret(`provider:${value.id}`)}; }
+    private saveProvider(body: RecordData, id?: string) { if(this.list('tasks').some(t=>['RUNNING','WAITING_APPROVAL'].includes(t.status)))throw new ApiError(409,'PROVIDER_CHANGE_REQUIRES_IDLE'); fields(body, ['name', 'vendor', 'model', 'apiKey', 'priority', 'dailyBudget', 'taskBudget']); const value: RecordData = { ...(id ? this.get('providers', id) : {}), ...body, id: id ?? randomUUID(), status: 'unverified' }; string(value.model, 100); if (value.vendor !== 'openai')
         throw new ApiError(400, 'UNSUPPORTED_PROVIDER'); if (body.apiKey !== undefined) {
         this.store.setSecret(`provider:${value.id}`, string(body.apiKey, 2000));
         delete value.apiKey;
-    } this.store.put('providers', value.id, value); await this.configureProviders(); return { ...value, configured: !!this.store.getSecret(`provider:${value.id}`) }; }
+    } this.store.put('providers', value.id, value); return value; }
     channel(body: RecordData, id?: string) { fields(body, ['name', 'type', 'token', 'allowedUsers', 'enabled']);if(body.enabled!==undefined&&typeof body.enabled!=='boolean')throw new ApiError(400,'INVALID_INPUT'); const v: RecordData = { ...(id ? this.get('channels', id) : {}), ...body, id: id ?? randomUUID(), status: 'disabled' }; if (v.type !== 'telegram' || !Array.isArray(v.allowedUsers) || v.allowedUsers.some((u: unknown) => typeof u !== 'string' || !/^\d+$/.test(u)))
         throw new ApiError(400, 'INVALID_CHANNEL'); if (body.token !== undefined) {
         this.store.setSecret(`channel:${v.id}`, string(body.token, 300));
@@ -543,18 +561,18 @@ export class ControlService {
         this.store.audit('external', 'inbound.denied', m.user, 'denied');
         return;
     } if (m.text.length > 32000)
-        throw new ApiError(413, 'MESSAGE_TOO_LARGE'); const principalId = `telegram:${m.account}:${m.user}`; this.store.put('principals', principalId, { id: principalId, allowed: true, permissions: this.store.get<RecordData>('principals', principalId)?.permissions ?? ['current_time', 'memory_search', 'read_file', 'web_fetch', 'web_search'] }); const thread = `telegram:${channelId}:${m.chat}`; let conversation = this.list('conversations').find(v => v.threadKey === thread); if (!conversation) {
+        throw new ApiError(413, 'MESSAGE_TOO_LARGE'); const principalId = `telegram:${m.account}:${m.user}`; this.store.put('principals', principalId, { id: principalId, allowed: true, permissions: this.store.get<RecordData>('principals', principalId)?.permissions ?? ['current_time', 'memory_search', 'read_file', 'web_fetch', 'web_search'] }); const thread = `telegram:${channelId}:${m.chat}${m.chat===m.user?'':`:${m.messageThreadId??'main'}:${m.user}`}`; let conversation = this.list('conversations').find(v => v.threadKey === thread); if (!conversation) {
         conversation = { id: randomUUID(), name: 'Telegram', status: 'active', channelId, threadKey: thread, scope: principalId };
         this.store.put('conversations', conversation.id, conversation);
         conversation = await this.ensureConversation(conversation);
-    } return this.createTask(conversation.id, m.text, 'telegram', `telegram:${m.account}:${m.id}`, { principalId, channelId, threadId: m.chat }); }
+    } return this.createTask(conversation.id, m.text, 'telegram', `telegram:${m.account}:${m.id}`, { principalId, channelId, threadId: m.chat, recipientUserId:m.user, messageThreadId:m.messageThreadId, replyToMessageId:m.messageId }); }
     private enqueueOutbox(t: RecordData, text: string) { chunks(text, 3500).forEach((content, index) => { const id = `${t.id}:${index}`; if (!this.store.get('outbox', id))
-        this.store.put('outbox', id, { id, dedupe_key: id, taskId: t.id, channelId: t.channelId, threadId: t.threadId, content, state: 'PENDING', attempts: 0, nextRetryAt: 0 }); }); }
+        this.store.put('outbox', id, { id, dedupe_key: id, taskId: t.id, channelId: t.channelId, threadId: t.threadId, recipientUserId:t.recipientUserId, messageThreadId:t.messageThreadId, replyToMessageId:t.replyToMessageId, content, state: 'PENDING', attempts: 0, nextRetryAt: 0 }); }); }
     private async channels() { for (const c of this.list('channels').filter(c => c.enabled)) {
         const token = this.store.getSecret(`channel:${c.id}`);
         if (!token)
             continue;
-        const adapter = telegramAdapter(token, c.allowedUsers, undefined, this.options.fetcher);
+        const adapter = telegramAdapter(token, c.allowedUsers, undefined, this.options.fetcher, true);
         if (!this.pollBusy.has(c.id)) {
             this.pollBusy.add(c.id);
             void adapter.poll!(this.store.setting(`cursor:${c.id}`, ''), this.abort.signal).then(async (page) => { if (this.closed || this.diskLow || this.stopped)
@@ -566,18 +584,19 @@ export class ControlService {
                 this.store.put('channels', c.id, { ...this.get('channels', c.id), status: 'reconnecting', lastError: 'POLL_FAILED' }); }).finally(() => this.pollBusy.delete(c.id));
         }
         for (const out of this.list('outbox').filter(o => o.channelId === c.id && ['PENDING', 'RETRY_WAIT'].includes(o.state) && o.nextRetryAt <= Date.now())) {
+            if(out.approvalExpiresAt&&out.approvalExpiresAt<=Date.now()){this.store.put('outbox',out.id,{...out,state:'FAILED',lastError:'APPROVAL_EXPIRED'});continue;}
             const deliveryTask = typeof out.taskId === 'string' ? this.store.get<RecordData>('tasks', out.taskId) : undefined;
             if ((deliveryTask?.scheduleId || deliveryTask?.heartbeatId) && this.store.setting<RecordData>('config', {}).notifications === false) continue;
             const current = this.get('channels', c.id);
-            if (!current.enabled || !current.allowedUsers.includes(out.threadId)) {
+            if (!current.enabled || !current.allowedUsers.includes(out.recipientUserId??out.threadId)) {
                 this.store.put('outbox', out.id, { ...out, state: 'FAILED', lastError: 'RECIPIENT_NOT_ALLOWED' });
                 this.store.audit('system', 'outbound.denied', out.id, 'denied');
                 continue;
             }
             this.store.put('outbox', out.id, { ...out, state: 'SENDING', attempts: out.attempts + 1 });
             try {
-                const receipt = await adapter.send({ key: '', platform: 'telegram', account: adapter.account, chat: out.threadId, user: '', scope: '', conversationId: 0, contextToken: '', lastInboundAt: 0 }, out.content, out.id, this.abort.signal);
-                this.store.put('outbox', out.id, { ...out, state: 'SENT', externalId: receipt.id });
+                const receipt = await adapter.send({ key: '', platform: 'telegram', account: adapter.account, chat: out.threadId, messageThreadId:out.messageThreadId, replyToMessageId:out.replyToMessageId, user: out.recipientUserId??out.threadId, scope: '', conversationId: 0, contextToken: '', lastInboundAt: 0 }, out.content, out.id, this.abort.signal);
+                this.store.put('outbox', out.id, { ...out, state: 'SENT', externalId: receipt.id, sentAt: Date.now() });
             }
             catch (e) {
                 const safe = e instanceof SendFailure && e.kind === 'rate_limited';
@@ -585,7 +604,7 @@ export class ControlService {
             }
         }
     } }
-    summary() { const tasks = this.list('tasks'); return { adapter: this.adapterReady ? 'ready' : 'unavailable', maintenance: this.store.maintenance, diskLow: this.diskLow, readOnly: this.stopped || this.diskLow || this.store.maintenance, runningTasks: tasks.filter(t => ['RUNNING', 'WAITING_APPROVAL'].includes(t.status)).length, queueDepth: tasks.filter(t => t.status === 'QUEUED').length, pendingApprovals: this.list('approvals').filter(a => a.status === 'PENDING').length + this.list('gmail_intents').filter(i => i.status === 'WAITING_APPROVAL' && i.expiresAt > Date.now()).length, providers: this.list('providers').map(p => ({ id: p.id, status: p.status ?? 'unverified', configured: !!this.store.getSecret(`provider:${p.id}`) })), rss: process.memoryUsage().rss, lastError: this.lastError, schemaVersion: this.store.schemaVersion }; }
+    summary() { const tasks = this.list('tasks');const day=new Date().toISOString().slice(0,10),usage=this.list('budget_reservations').filter(r=>r.day===day);const usageToday={day,tokens:usage.reduce((n,r)=>n+(r.state==='settled'?r.actualTokens??0:r.reservedTokens??0),0),cost:usage.reduce((n,r)=>n+(r.state==='settled'?r.actualCost??0:r.reservedCost??0),0),unknownCost:usage.some(r=>r.state!=='settled')}; return { version:appPackage.version,piVersion:appPackage.dependencies['@earendil-works/pi-durable'],usageToday,channels:this.list('channels').map(c=>({id:c.id,name:c.name,status:c.status,lastError:c.lastError})), adapter: this.adapterReady ? 'ready' : 'unavailable', maintenance: this.store.maintenance, diskLow: this.diskLow, readOnly: this.stopped || this.diskLow || this.store.maintenance, runningTasks: tasks.filter(t => ['RUNNING', 'WAITING_APPROVAL'].includes(t.status)).length, queueDepth: tasks.filter(t => t.status === 'QUEUED').length, pendingApprovals: this.list('approvals').filter(a => a.status === 'PENDING').length + this.list('gmail_intents').filter(i => i.status === 'WAITING_APPROVAL' && i.expiresAt > Date.now()).length, providers: this.list('providers').map(p => ({ id: p.id, status: p.status ?? 'unverified', configured: !!this.store.getSecret(`provider:${p.id}`) })), rss: process.memoryUsage().rss, lastError: this.lastError, schemaVersion: this.store.schemaVersion }; }
     private async closeAdapter() {
         if (!this.adapterReady) return;
         for (const detach of this.observers.values()) detach();

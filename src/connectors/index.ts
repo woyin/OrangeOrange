@@ -7,6 +7,33 @@ export * from './actions.js';
 export * from './oauth.js';
 export * from './mime.js';
 
+export interface AppConnector<Start = Parameters<GoogleOAuthClient['startAuthorization']>[0], Finish = Parameters<GoogleOAuthClient['completeAuthorization']>[0], StartResult = Awaited<ReturnType<GoogleOAuthClient['startAuthorization']>>, Connection = NonNullable<ReturnType<GoogleOAuthClient['connection']>>, ActionInput = Parameters<GmailActions['propose']>[0], ActionResult = ReturnType<GmailActions['propose']>> {
+  manifest():ReturnType<GmailActions['manifest']>;
+  discoverScopes():ReturnType<GmailActions['discoverScopes']>;
+  connect(input:{phase:'start'; request:Start}):Promise<StartResult>;
+  connect(input:{phase:'finish'; request:Finish}):Promise<Connection>;
+  test(id:string,principalId:string):Connection|undefined;
+  refresh(id:string,principalId:string):Promise<Connection>;
+  revoke(id:string,principalId:string):Promise<void>;
+  listActions():ReturnType<GmailActions['listActions']>;
+  invoke(input:ActionInput):ActionResult;
+}
+
+/** The connector creates a governed intent; dispatch remains subject to approval. */
+export class GmailConnector implements AppConnector {
+  constructor(readonly oauth:GoogleOAuthClient,readonly actions:GmailActions) {}
+  manifest(){return this.actions.manifest();}
+  discoverScopes(){return this.actions.discoverScopes();}
+  connect(input:{phase:'start';request:Parameters<GoogleOAuthClient['startAuthorization']>[0]}):ReturnType<GoogleOAuthClient['startAuthorization']>;
+  connect(input:{phase:'finish';request:Parameters<GoogleOAuthClient['completeAuthorization']>[0]}):ReturnType<GoogleOAuthClient['completeAuthorization']>;
+  connect(input:{phase:'start';request:Parameters<GoogleOAuthClient['startAuthorization']>[0]}|{phase:'finish';request:Parameters<GoogleOAuthClient['completeAuthorization']>[0]}) {return input.phase==='start'?this.oauth.startAuthorization(input.request):this.oauth.completeAuthorization(input.request);}
+  test(id:string,principalId:string){return this.oauth.connection(id,principalId);}
+  refresh(id:string,principalId:string){return this.oauth.refresh(id,principalId);}
+  revoke(id:string,principalId:string){return this.oauth.revoke(id,principalId);}
+  listActions(){return this.actions.listActions();}
+  invoke(input:Parameters<GmailActions['propose']>[0]){return this.actions.propose(input);}
+}
+
 /** Account addresses must come from an Owner-controlled binding, never model input. */
 export function createGmailConnector(store:ControlStore, options:{
   oauth:GoogleOAuthConfig;
@@ -27,5 +54,5 @@ export function createGmailConnector(store:ControlStore, options:{
     now:options.now,
     markNeedsReauth:id=>{const c=store.get<Record<string,unknown>>('app_connections',id);if(c&&c.status!=='REVOKED')store.put('app_connections',id,{...c,status:'NEEDS_REAUTH',updatedAt:(options.now??Date.now)(),error:{code:'REAUTHORIZATION_REQUIRED',message:'Gmail rejected the access token',at:(options.now??Date.now)()}});},
   });
-  return {oauth,actions};
+  return new GmailConnector(oauth,actions);
 }

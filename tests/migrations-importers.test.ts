@@ -596,7 +596,8 @@ describe("parseOpenClaw", () => {
     expect(cronContent.prompt).not.toContain("delivery-token-should-not-appear");
     expect(cronContent.sourceEnabled).toBe(true);
     expect(cron?.warnings).toContain("cron_requires_review");
-    expect(cron?.warnings?.some((warning) => warning.startsWith("cron_fields_omitted:delivery"))).toBe(true);
+    expect(cronContent).toMatchObject({delivery:{channel:"telegram"}});
+    expect(cron?.warnings).toContain("cron_field_omitted:delivery.token");
 
     const config = inventory.items.find((item) => item.type === "config");
     const configText = JSON.stringify(config?.content);
