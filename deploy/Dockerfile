@@ -23,6 +23,7 @@ CMD ["npm", "test", "--", "tests/recovery.test.ts", "tests/ownership.test.ts", "
 FROM build AS compiled
 RUN npm run build:server && npm prune --omit=dev
 FROM node:24.14.1-bookworm-slim AS runtime
+RUN apt-get update && apt-get upgrade -y && apt-get clean && rm -rf /var/lib/apt/lists/* /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 ENV NODE_ENV=production HDA_DATA_DIR=/data HDA_WORKSPACE=/workspace HDA_HOST=0.0.0.0 HDA_PORT=8787 HDA_WEB_DIR=/app/apps/web/dist
 WORKDIR /app
 COPY --from=compiled /app/node_modules ./node_modules

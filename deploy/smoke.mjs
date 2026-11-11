@@ -13,17 +13,24 @@ const workspace = `${container}-workspace`;
 const restoredContainer = `${container}-restore`, restoredData = `${restoredContainer}-data`, restoredWorkspace = `${restoredContainer}-workspace`;
 let snapshotDirectory;
 const docker = (...args) => execFileSync('docker', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-const deadline = Date.now() + 60000;
 let base;
+async function waitReady(name) {
+  const deadline=Date.now()+60000;
+  while(Date.now()<deadline) {
+    const info=JSON.parse(docker('inspect',name))[0];
+    if(info.State?.Status==='exited')throw new Error('Container exited before readiness');
+    const port=info.NetworkSettings.Ports?.['8787/tcp']?.[0]?.HostPort;
+    if(port) {
+      base=`http://127.0.0.1:${port}`;
+      try{if((await fetch(`${base}/health/ready`,{signal:AbortSignal.timeout(2000)})).ok)return;}catch{}
+    }
+    await new Promise(resolve=>setTimeout(resolve,250));
+  }
+  throw new Error('Container port mapping or readiness exceeded 60 seconds');
+}
 try {
   docker('run', '-d', '--name', container, '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--tmpfs', '/tmp:rw,nosuid,nodev,size=64m', '--memory', '1g', '--cpus', '2', '-p', '127.0.0.1::8787', '-v', `${data}:/data`, '-v', `${workspace}:/workspace:ro`, image);
-  const port = JSON.parse(docker('inspect', container))[0].NetworkSettings.Ports['8787/tcp'][0].HostPort;
-  base = `http://127.0.0.1:${port}`;
-  while (true) {
-    try { if ((await fetch(`${base}/health/ready`)).ok) break; } catch {}
-    if (Date.now() >= deadline) throw new Error('Container readiness exceeded 60 seconds');
-    await new Promise(resolve => setTimeout(resolve, 250));
-  }
+  await waitReady(container);
   const inspected = JSON.parse(docker('inspect', container))[0];
   assert.equal(inspected.Config.User, 'node');
   assert.equal(inspected.HostConfig.ReadonlyRootfs, true);
@@ -36,13 +43,7 @@ try {
   const setup = await (await fetch(`${base}/api/v1/setup/status`)).json();
   assert.equal(setup.data.initialized, false);
   docker('restart', container);
-  base = `http://127.0.0.1:${JSON.parse(docker('inspect', container))[0].NetworkSettings.Ports['8787/tcp'][0].HostPort}`;
-  const restartDeadline = Date.now() + 60000;
-  while (true) {
-    try { if ((await fetch(`${base}/health/ready`)).ok) break; } catch {}
-    if (Date.now() >= restartDeadline) throw new Error('Restart readiness exceeded 60 seconds');
-    await new Promise(resolve => setTimeout(resolve, 250));
-  }
+  await waitReady(container);
   const ownerPassword = randomUUID() + randomUUID();
   let cookie = '', csrf = '';
   async function api(path, method = 'GET', body) {
@@ -58,13 +59,7 @@ try {
   const memory = await api('memories', 'POST', { kind: 'semantic', scope: 'owner', content: 'container-memory', source: 'owner' });
   assert.equal(memory.response.status, 200);
   docker('restart', container);
-  base = `http://127.0.0.1:${JSON.parse(docker('inspect', container))[0].NetworkSettings.Ports['8787/tcp'][0].HostPort}`;
-  const persistedDeadline = Date.now() + 60000;
-  while (true) {
-    try { if ((await fetch(`${base}/health/ready`)).ok) break; } catch {}
-    if (Date.now() >= persistedDeadline) throw new Error('Initialized container restart exceeded 60 seconds');
-    await new Promise(resolve => setTimeout(resolve, 250));
-  }
+  await waitReady(container);
   assert.equal((await api('auth/session')).response.status, 200);
   assert.equal((await api(`conversations/${conversation.json.data.id}`)).json.data.name, 'container-persistence');
   const snapshot = await api('backup', 'POST', { confirm: true, password: ownerPassword });
@@ -84,14 +79,7 @@ try {
   snapshotDirectory = await mkdtemp(join(tmpdir(), 'hda-container-restore-'));
   docker('cp', `${container}:/data/backups/${snapshot.json.data.id}`, snapshotDirectory);
   docker('run', '-d', '--name', restoredContainer, '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--tmpfs', '/tmp:rw,nosuid,nodev,size=64m', '--memory', '1g', '--cpus', '2', '-p', '127.0.0.1::8787', '-v', `${restoredData}:/data`, '-v', `${restoredWorkspace}:/workspace:ro`, image);
-  const restoredPort = JSON.parse(docker('inspect', restoredContainer))[0].NetworkSettings.Ports['8787/tcp'][0].HostPort;
-  base = `http://127.0.0.1:${restoredPort}`; cookie = ''; csrf = '';
-  const cleanDeadline = Date.now() + 60000;
-  while (true) {
-    try { if ((await fetch(`${base}/health/ready`)).ok) break; } catch {}
-    if (Date.now() >= cleanDeadline) throw new Error('Clean restore container readiness exceeded 60 seconds');
-    await new Promise(resolve => setTimeout(resolve, 250));
-  }
+  await waitReady(restoredContainer); cookie = ''; csrf = '';
   const fresh = await api('setup', 'POST', { username: 'fresh-owner', password: ownerPassword, timezone: 'UTC' });
   assert.equal(fresh.response.status, 200);
   cookie = fresh.response.headers.get('set-cookie').split(';')[0]; csrf = fresh.json.data.csrf;
@@ -106,7 +94,7 @@ try {
   cookie = restoredLogin.response.headers.get('set-cookie').split(';')[0]; csrf = restoredLogin.json.data.csrf;
   assert.equal((await api(`conversations/${conversation.json.data.id}`)).json.data.name, 'container-persistence');
   assert.equal((await api('memories?q=container-memory&scope=owner')).json.data.items.length, 1);
-  console.log('PASS: fresh-container restore; native production image, non-root/read-only/cap-drop, health, Web, authentication, initialized volume restart, two-database backup/restore, old session revoked; no external model or Telegram verification');
+  console.log('PASS: fresh-container restore; production image, non-root/read-only/cap-drop, health, Web, authentication, initialized volume restart, two-database backup/restore, old session revoked; no external model or Telegram verification');
 } finally {
   for (const name of [container, restoredContainer]) { try { docker('rm', '-f', name); } catch {} }
   for (const volume of [data, workspace, restoredData, restoredWorkspace]) { try { docker('volume', 'rm', volume); } catch {} }
