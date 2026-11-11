@@ -1,13 +1,15 @@
 import { BACKGROUND_CONTEXT as ctx } from "@earendil-works/chord/context";
-import { createModels, type MutableModels } from "@earendil-works/pi-ai/models";
+import { createModels, createProvider, type MutableModels } from "@earendil-works/pi-ai/models";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
+import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
+import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
 import type { ConversationId } from "@earendil-works/pi-durable";
 import { openRuntime, type Runtime, type RuntimeOptions } from "./runtime.js";
 import type { Config } from "./config.js";
 import { DatabaseSync, backup } from "node:sqlite";
 import { join } from "node:path";
 export type { RuntimeOptions } from "./runtime.js";
-export type ProviderConfig = {id:string;vendor:string;model:string;apiKey?:string;priority?:number};
+export type ProviderConfig = {id:string;vendor:string;model:string;apiKey?:string;baseUrl?:string;contextWindow?:number;maxTokens?:number;inputPrice?:number;outputPrice?:number;priority?:number};
 
 /** 唯一控制平面 SDK 边界。不会自主执行供应商切换。 */
 export class PiAdapter {
@@ -33,15 +35,34 @@ export class PiAdapter {
     if (params.model && this.providers.length && !selected) throw new Error("模型未配置");
     return this.runtime.createConversation({...params,...(selected ? {provider:selected.id,model:selected.model}: {})});
   }
+  validateProvider(config:ProviderConfig):{pricingKnown:boolean} { return {pricingKnown:this.prepareProvider(config).pricingKnown}; }
+  private prepareProvider(p:ProviderConfig) {
+    if (p.vendor !== "openai" || !p.id || typeof p.model!=="string" || !p.model.trim()) throw new Error("仅支持已核实的 OpenAI 供应商");
+    const base=openaiProvider(),selected=base.getModels().find(m=>m.id===p.model);
+    if(!selected&&p.baseUrl===undefined)throw new Error('UNSUPPORTED_MODEL');
+    const contextWindow=p.contextWindow??selected?.contextWindow??32768,maxTokens=p.maxTokens??Math.min(selected?.maxTokens??4096,contextWindow);
+    const explicitPrice=p.inputPrice!==undefined&&p.outputPrice!==undefined;
+    if(!Number.isSafeInteger(contextWindow)||contextWindow<1||!Number.isSafeInteger(maxTokens)||maxTokens<1||maxTokens>contextWindow||(p.inputPrice===undefined)!==(p.outputPrice===undefined)||[p.inputPrice,p.outputPrice].some(n=>n!==undefined&&(typeof n!=='number'||!Number.isFinite(n)||n<0)))throw new Error('INVALID_MODEL_CONFIG');
+    const pricingKnown=explicitPrice||(!p.baseUrl&&!!selected),auth={apiKey:{name:"服务密钥",resolve:async()=>p.apiKey ? {auth:{apiKey:p.apiKey}}:undefined}};
+    if(p.baseUrl===undefined&&selected&&p.contextWindow===undefined&&p.maxTokens===undefined&&!explicitPrice)return {pricingKnown,provider:{...base,id:p.id,getModels:()=>base.getModels().map(model=>({...model,provider:p.id})),getAllModels:()=>base.getModels().map(model=>({...model,provider:p.id})),auth}};
+    let baseUrl=base.baseUrl!;
+    if(p.baseUrl!==undefined){
+      let url:URL;
+      try{url=new URL(p.baseUrl);}catch{throw new Error("INVALID_PROVIDER_URL");}
+      if(typeof p.baseUrl!=="string"||url.username||url.password||url.search||url.hash||!(url.protocol==='https:'||(url.protocol==='http:'&&['localhost','127.0.0.1','[::1]'].includes(url.hostname))))throw new Error("INVALID_PROVIDER_URL");
+      baseUrl=url.href.replace(/\/+$/,'');
+    }
+    const cost=explicitPrice?{input:p.inputPrice!,output:p.outputPrice!,cacheRead:p.inputPrice!,cacheWrite:p.inputPrice!}:pricingKnown?selected!.cost:{input:0,output:0,cacheRead:0,cacheWrite:0};
+    const model={...(selected??{id:p.model,name:p.model,input:['text'] as ['text'],reasoning:false}),provider:p.id,baseUrl,contextWindow,maxTokens,cost};
+    const provider=p.baseUrl!==undefined
+      ?createProvider({id:p.id,baseUrl,auth,models:[{...model,api:'openai-completions',compat:selected?undefined:{supportsStore:false,supportsDeveloperRole:false,supportsReasoningEffort:false,maxTokensField:'max_tokens'}}],api:openAICompletionsApi()})
+      :createProvider({id:p.id,baseUrl,auth,models:[{...model,api:'openai-responses',compat:undefined}],api:openAIResponsesApi()});
+    return {provider,pricingKnown};
+  }
   async configureProviders(providers:ProviderConfig[]):Promise<void> {
     if (providers.length > 8 || new Set(providers.map(p=>p.id)).size !== providers.length) throw new Error("供应商候选必须唯一且最多八个");
     if (!this.models && providers.length) throw new Error("注入模型目录不支持动态供应商配置");
-    const prepared = providers.map(p=>{
-      if (p.vendor !== "openai" || !p.id || !p.model) throw new Error("仅支持已核实的 OpenAI 供应商");
-      const base = openaiProvider();
-      if (!base.getModels().some(m=>m.id===p.model)) throw new Error("模型不在供应商目录");
-      return { ...base,id:p.id,getModels:()=>base.getModels().map(model=>({...model,provider:p.id})),getAllModels:()=>base.getModels().map(model=>({...model,provider:p.id})),auth:{apiKey:{name:"服务密钥",resolve:async()=>p.apiKey ? {auth:{apiKey:p.apiKey}}:undefined}} };
-    });
+    const prepared = providers.map(p=>this.prepareProvider(p).provider);
     for (const previous of this.providers) this.models?.deleteProvider(previous.id);
     prepared.forEach(p=>this.models!.setProvider(p));
     this.providers = [...providers].sort((a,b)=>(a.priority ?? 0)-(b.priority ?? 0));

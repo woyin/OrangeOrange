@@ -25,7 +25,7 @@ function submit() {
   <select v-if="field.options" v-model="value[field.key]" :required="field.required"><option value="" disabled>请选择</option><option v-for="option in field.options" :key="option">{{option}}</option></select>
   <textarea v-else-if="field.type==='textarea'" v-model="value[field.key]" :required="field.required" rows="4" />
   <input v-else-if="field.type==='checkbox'" v-model="value[field.key]" type="checkbox">
-  <input v-else v-model="value[field.key]" :type="field.type ?? 'text'" :required="field.required" :step="field.type==='number'?'any':undefined" :autocomplete="field.type==='password'?'new-password':undefined">
+  <input v-else v-model="value[field.key]" :type="field.type ?? 'text'" :required="field.required" :minlength="field.minLength" :step="field.type==='number'?'any':undefined" :autocomplete="field.type==='password'?'new-password':undefined">
   <small v-if="field.help">{{field.help}}</small>
  </label><button type="submit" :disabled="busy">{{busy?'正在提交…':submitLabel ?? '保存'}}</button>
 </form></template>

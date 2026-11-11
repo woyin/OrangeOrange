@@ -22,7 +22,8 @@ export class AuthService {
   // Maintenance permits existing authenticated reads only. Login creates a session and is refused.
   private available():void {if(this.store.maintenance)throw new Error('MAINTENANCE');}
   setup(input:{username:string;password:string;timezone:string}):void {
-    if(!input.username.trim()||input.password.length<12)throw new Error('INVALID_CREDENTIALS');
+    if(!input.username.trim())throw new Error('INVALID_CREDENTIALS');
+    if(input.password.length<12)throw new Error('WEAK_PASSWORD');
     new Intl.DateTimeFormat('en',{timeZone:input.timezone});
     this.store.transaction(()=>{
       if(this.store.list('users').length)throw new Error('ALREADY_INITIALIZED');

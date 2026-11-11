@@ -430,8 +430,9 @@ export async function startControlServer(options: ServerOptions) {
                     const key = service.store.getSecret(`provider:${id}`);
                     if (!key)
                         throw new ApiError(409, 'PROVIDER_UNCONFIGURED');
-                    const response = await (options.fetcher ?? fetch)('https://api.openai.com/v1/models', { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(10000) });
-                    const value = { ...service.get('providers', id), status: response.ok ? 'online' : response.status === 401 ? 'invalid_credentials' : 'unavailable', testedAt: Date.now() };
+                    const provider = service.get('providers', id), base = String(provider.baseUrl ?? 'https://api.openai.com/v1').replace(/\/+$/, '');
+                    const response = await (options.fetcher ?? fetch)(`${base}/models`, { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(10000) });
+                    const value = { ...service.get('providers', id), status: response.ok ? 'online' : [401, 403].includes(response.status) ? 'invalid_credentials' : [404, 405].includes(response.status) ? 'unverified' : 'unavailable', testedAt: Date.now() };
                     service.store.put('providers', id, value);
                     return value;
                 }

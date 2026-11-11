@@ -9,7 +9,7 @@ test('首次配置持久化且秘密不回显', async({page})=>{
  try {
  await page.goto(app.url);
  await page.getByLabel('管理员用户名').fill('owner');await page.getByLabel('密码',{exact:false}).first().fill(password);
- await page.getByLabel('模型提供商').fill('openai');await page.getByLabel('模型 ID',{exact:false}).fill('gpt-4.1-mini');await page.getByLabel('模型密钥').fill(secret);
+ await page.getByLabel('模型提供商').selectOption('openai');await page.getByLabel('模型 ID',{exact:false}).fill('gpt-4.1-mini');await page.getByLabel('模型密钥').fill(secret);
  await page.getByRole('button',{name:'完成配置'}).click();await expect(page.getByRole('button',{name:'注销会话'})).toBeVisible();
  expect(app.service.list('providers')[0]?.model).toBe('gpt-4.1-mini');await page.reload();await expect(page.getByRole('button',{name:'注销会话'})).toBeVisible();
  await navigate(page,'模型与预算');await expect(page.locator('body')).not.toContainText(secret);await page.getByRole('button',{name:'编辑',exact:true}).click();await expect(page.getByLabel('新密钥 / 替换密钥')).toHaveValue('');await noOverflow(page);

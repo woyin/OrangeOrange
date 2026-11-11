@@ -31,6 +31,13 @@ jobs:
         run: DOCKER_BUILDKIT=0 docker build --target runtime -t hda:runtime -f deploy/Dockerfile .
       - name: Container smoke
         run: node deploy/smoke.mjs
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.14.1
+          cache: npm
+      - name: Install browser smoke dependencies
+        run: npm ci
+      - run: npx playwright install --with-deps chromium
       - name: Compose installation smoke
         run: HDA_TEST_IMAGE=hda:runtime node deploy/compose-smoke.mjs
       - name: Scan production container
