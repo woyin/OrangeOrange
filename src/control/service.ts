@@ -578,8 +578,8 @@ export class ControlService {
         this.store.put('conversations', conversation.id, conversation);
         conversation = await this.ensureConversation(conversation);
     } return this.createTask(conversation.id, m.text, 'telegram', `telegram:${m.account}:${m.id}`, { principalId, channelId, threadId: m.chat, recipientUserId:m.user, messageThreadId:m.messageThreadId, replyToMessageId:m.messageId }); }
-    private enqueueOutbox(t: RecordData, text: string) { chunks(text, 3500).forEach((content, index) => { const id = `${t.id}:${index}`; if (!this.store.get('outbox', id))
-        this.store.put('outbox', id, { id, dedupe_key: id, taskId: t.id, channelId: t.channelId, threadId: t.threadId, recipientUserId:t.recipientUserId, messageThreadId:t.messageThreadId, replyToMessageId:t.replyToMessageId, content, state: 'PENDING', attempts: 0, nextRetryAt: 0 }); }); }
+    private enqueueOutbox(t: RecordData, text: string) { const channel = this.store.get<RecordData>('channels', t.channelId), recipient = t.recipientUserId ?? (Array.isArray(channel?.allowedUsers) && channel.allowedUsers.length === 1 ? channel.allowedUsers[0] : undefined); chunks(text, 3500).forEach((content, index) => { const id = `${t.id}:${index}`; if (!this.store.get('outbox', id))
+        this.store.put('outbox', id, { id, dedupe_key: id, taskId: t.id, channelId: t.channelId, threadId: t.threadId, recipientUserId: recipient, messageThreadId:t.messageThreadId, replyToMessageId:t.replyToMessageId, content, state: 'PENDING', attempts: 0, nextRetryAt: 0 }); }); }
     private async channels() { for (const c of this.list('channels').filter(c => c.enabled)) {
         const token = this.store.getSecret(`channel:${c.id}`);
         if (!token)
@@ -607,12 +607,12 @@ export class ControlService {
             }
             this.store.put('outbox', out.id, { ...out, state: 'SENDING', attempts: out.attempts + 1 });
             try {
-                const receipt = await adapter.send({ key: '', platform: 'telegram', account: adapter.account, chat: out.threadId, messageThreadId:out.messageThreadId, replyToMessageId:out.replyToMessageId, user: out.recipientUserId??out.threadId, scope: '', conversationId: 0, contextToken: '', lastInboundAt: 0 }, out.content, out.id, this.abort.signal);
+                const receipt = await adapter.send({ key: '', platform: 'telegram', account: adapter.account, chat: out.threadId ?? out.recipientUserId, messageThreadId:out.messageThreadId, replyToMessageId:out.replyToMessageId, user: out.recipientUserId??out.threadId, scope: '', conversationId: 0, contextToken: '', lastInboundAt: 0 }, out.content, out.id, this.abort.signal);
                 this.store.put('outbox', out.id, { ...out, state: 'SENT', externalId: receipt.id, sentAt: Date.now() });
             }
             catch (e) {
                 const safe = e instanceof SendFailure && e.kind === 'rate_limited';
-                this.store.put('outbox', out.id, { ...out, attempts: out.attempts + 1, state: safe && out.attempts < 4 ? 'RETRY_WAIT' : e instanceof SendFailure && e.kind === 'rejected' ? 'FAILED' : 'DELIVERY_UNCERTAIN', nextRetryAt: Date.now() + Math.min(3600000, 1000 * 2 ** out.attempts) });
+                this.store.put('outbox', out.id, { ...out, attempts: out.attempts + 1, state: safe && out.attempts < 4 ? 'RETRY_WAIT' : e instanceof SendFailure && e.kind === 'rejected' ? 'FAILED' : 'DELIVERY_UNCERTAIN', lastError: (e instanceof SendFailure ? `${e.kind}:${String(e.message ?? '')}` : String(e)).slice(0, 200), nextRetryAt: Date.now() + Math.min(3600000, 1000 * 2 ** out.attempts) });
             }
         }
     } }

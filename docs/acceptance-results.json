@@ -9,7 +9,7 @@
     ],
     "openWrtVerified": false,
     "realModelVerified": true,
-    "realTelegramVerified": false,
+    "realTelegramVerified": true,
     "soakDurationMs": 0,
     "realGmailVerified": false,
     "realMigrationSourcesVerified": [],

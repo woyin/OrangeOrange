@@ -2,6 +2,14 @@
 
 本记录区分静态审计、自动化运行和外部验收。当前基线为 v1.1。真实 Google、Telegram、外部模型、完整来源备份、OpenWrt 和 72 小时实验未验收。
 
+## Telegram 投递验证（真实 Bot）
+
+在 macOS ARM64 宿主用真实 Bot Token 与 Owner 账号完成一次真实投递：定时任务“立即执行”触发真实模型调用，任务 `SUCCEEDED`，outbox 记录 `SENT`，通道状态 `connected`。消息已实际送达 Owner 的 Telegram。
+
+过程中修复两个缺陷：定时任务未指定线程时 `chat` 为空导致发送失败；发送失败未写入 `lastError`，无法排查。现在无线程时回退到收件人，失败会记录 `kind` 与原因。
+
+范围：仅验证出站投递。入站消息处理、多用户隔离与群组话题未在真实 Telegram 中验证。
+
 ## 真实模型与 Telegram 探测（本轮）
 
 使用本机 `.env` 中由 Owner 提供的凭据，对真实服务执行一次闭环。凭据未写入仓库、日志或本记录。
