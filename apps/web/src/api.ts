@@ -1,3 +1,4 @@
+import { errorText } from './present';
 export class ApiError extends Error {
   constructor(public code: string, message: string, public status: number, public requestId?: string) { super(message); }
 }
@@ -12,7 +13,10 @@ export async function api<T = any>(path: string, method = 'GET', body?: unknown,
   }
   const response = await fetch('/api/v1/' + path, { method, headers, credentials: 'same-origin', body: body === undefined ? undefined : JSON.stringify(body) });
   const result = await response.json().catch(() => ({}));
-  if (!response.ok) throw new ApiError(result.error?.code ?? 'HTTP_ERROR', result.error?.message ?? `请求失败（${response.status}）`, response.status, result.requestId);
+  if (!response.ok) {
+    const code = result.error?.code ?? 'HTTP_ERROR';
+    throw new ApiError(code, errorText(code), response.status, result.requestId);
+  }
   return result.data;
 }
 export function items(value: any): any[] { return Array.isArray(value) ? value : value?.items ?? []; }

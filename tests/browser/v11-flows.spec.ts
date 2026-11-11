@@ -81,8 +81,8 @@ test('真实本地邮件审批发送一次，取消后的意图不能发送', as
     const callback = await fetch(`${f.app.url}/api/v1/oauth/google/callback?${new URLSearchParams({ state, code: 'controlled-code' })}`, { redirect: 'manual' });
     expect(callback.status).toBe(303);
     await page.getByRole('button', { name: '刷新状态' }).click();
-    await expect(page.locator('option').filter({ hasText: 'Browser Gmail · CONNECTED' })).toHaveCount(1);
-    await page.getByLabel('发送账号').selectOption({ label: 'Browser Gmail · CONNECTED' });
+    await expect(page.locator('option').filter({ hasText: 'Browser Gmail · 已连接' })).toHaveCount(1);
+    await page.getByLabel('发送账号').selectOption({ label: 'Browser Gmail · 已连接' });
     await page.getByLabel('收件人 To（逗号或换行分隔）').fill('recipient@example.com');
     await page.getByLabel('主题', { exact: true }).fill('Browser mail');
     await page.getByLabel('纯文本正文').fill('Local approval body');
@@ -103,12 +103,12 @@ test('真实本地邮件审批发送一次，取消后的意图不能发送', as
     page.once('dialog', dialog => dialog.accept());
     await page.getByRole('button', { name: '确认发送' }).click();
     await expect(page.getByRole('button', { name: '确认发送' })).toBeDisabled();
-    await expect(page.getByRole('button', { name: /CONFIRMED/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: /已确认/ })).toBeVisible();
     expect(sends).toBe(1);
     await page.getByRole('button', { name: '提交草稿供审核' }).click();
     await expect(page.getByText('已提交本地待审批意图，尚未发送。')).toBeVisible();
     await page.getByRole('button', { name: '取消意图' }).click();
-    await expect(page.getByRole('button', { name: /CANCELLED/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: /已取消/ })).toBeVisible();
     await expect(page.getByRole('button', { name: '确认发送' })).toBeDisabled();
     expect(sends).toBe(1);
   } finally { await page.close(); await f.close(); }
