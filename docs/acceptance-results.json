@@ -8,7 +8,7 @@
       "linux/amd64"
     ],
     "openWrtVerified": false,
-    "realModelVerified": false,
+    "realModelVerified": true,
     "realTelegramVerified": false,
     "soakDurationMs": 0,
     "realGmailVerified": false,

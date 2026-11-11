@@ -21,7 +21,9 @@
 
 容器安全复扫仍失败：两架构各34个HIGH和1个CRITICAL包/CVE匹配，当前发行版未给出修复版本，未接受风险。详细见 [容器安全结果](docs/container-security-results.json)。
 
-- 真实 OpenWrt、真实模型/Telegram/Gmail 及真实 OpenClaw/Hermes 完整备份尚未验收。
+- 真实模型已完成一次通过（macOS ARM64 宿主、真实兼容服务与真实密钥），证据见[本轮核验](docs/P0-VERIFICATION.md)；不等于 OpenWrt 或长期运行验收。
+- Telegram 仅验证 token 有效（getMe），未发送消息，入站与投递闭环未验收。
+- 真实 OpenWrt、真实 Gmail 及真实 OpenClaw/Hermes 完整备份尚未验收。
 - 72 小时稳定性实验尚未完成；短跑不能代替它。
 - AMD64 使用 ARM64 宿主仿真执行，不能称为原生 AMD64 硬件或 CI 验收。
 - 迁移只承诺兼容文档中固定版本/格式范围；源产品版本无法识别时明确为未知。外部历史不是 Pi 可恢复 checkpoint。

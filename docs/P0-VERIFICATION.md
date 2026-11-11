@@ -2,6 +2,22 @@
 
 本记录区分静态审计、自动化运行和外部验收。当前基线为 v1.1。真实 Google、Telegram、外部模型、完整来源备份、OpenWrt 和 72 小时实验未验收。
 
+## 真实模型与 Telegram 探测（本轮）
+
+使用本机 `.env` 中由 Owner 提供的凭据，对真实服务执行一次闭环。凭据未写入仓库、日志或本记录。
+
+| 检查 | 结果 | 范围 |
+|---|---|---|
+| 模型地址探测 | 通过，状态 `online` | 请求配置地址的 `/models`，返回 25 个模型 |
+| 真实对话 | 通过，`SUCCEEDED`，约 2.0 秒 | 一次真实 `/chat/completions` 调用，返回中文回复；usage 标记 `costUnknown` |
+| Telegram | token 有效，`connected` | 仅 `getMe` 探测；未发送消息，入站与投递闭环未验证 |
+
+首次运行失败，原因是 `.env` 中模型名写作 `group/deepseek-v4.1-flash`，服务端返回 404 并说明应为 `group/deepseek-v4-1-flash`。这暴露两个产品问题，已修复：连接测试只验证地址可用、不验证模型存在；运行时把上游错误压成 `CONTROL_MODEL_ERROR`，丢失原因。现在连接测试在 `/models` 列表不含该模型时返回 `model_not_listed`，运行时把上游文本记入任务失败记录与结构化日志（写入前脱敏 `sk-`、Bearer 和 Telegram token 形式）。
+
+本轮还补充结构化日志（`src/control/log.ts`）：tick 异常、提交失败、模型失败均输出 JSON 行并保留原因；此前这些路径只留下 `WORKER_ERROR` 与 `SUBMISSION_FAILED`。测试确认日志不含密钥。
+
+上述证据来自 macOS ARM64 宿主上的容器化服务，不是 OpenWrt 设备，也不是 72 小时运行。Telegram 只验证了凭据有效性。
+
 ## 连接测试地址缺陷修复
 
 发现“测试连接”写死请求`https://api.openai.com/v1/models`，未使用配置的`baseUrl`，导致自定义代理的密钥被发往OpenAI官方并误报凭据无效。现按`baseUrl`拼接`/models`；401/403记为凭据无效，404/405记为“地址可达但无模型列表接口”，其他失败记为不可用。新增`tests/provider-test-endpoint.test.ts`核对请求路径与Bearer头，浏览器测试同时断言上游只收到`/v1/models`。本轮`npm run test:all`通过：62个后端文件315项、22项浏览器测试。
