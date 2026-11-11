@@ -42,14 +42,11 @@ jobs:
       - name: Compose installation smoke
         run: HDA_TEST_IMAGE=hda:runtime node deploy/compose-smoke.mjs
       - name: Scan production container
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          image-ref: hda:runtime
-          severity: HIGH,CRITICAL
-          ignore-unfixed: false
-          format: json
-          output: trivy-results.json
-          exit-code: '0'
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/work" -w /work \
+            aquasec/trivy:0.76.2 image --image-src docker --scanners vuln \
+            --severity HIGH,CRITICAL --ignore-unfixed=false \
+            --format json --output trivy-results.json --exit-code 0 hda:runtime
       - name: Summarize scan findings
         if: always()
         run: |
