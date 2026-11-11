@@ -11,6 +11,7 @@ COPY package.json package-lock.json ./
 RUN npm_config_nodedir=/usr/local npm ci --fetch-timeout=30000 --fetch-retries=1
 COPY tsconfig*.json ./
 COPY src ./src
+COPY apps/web/src ./apps/web/src
 COPY tests ./tests
 COPY docs/openapi.json ./docs/openapi.json
 COPY vitest.config.ts ./
