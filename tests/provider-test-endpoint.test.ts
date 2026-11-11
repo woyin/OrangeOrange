@@ -16,6 +16,13 @@ test('provider connection test probes the configured endpoint, not api.openai.co
   const ok=await f.request(`providers/${id}/test`,'POST',{});
   expect(ok.response.status).toBe(200);expect(ok.json.data.status).toBe('online');
   expect(seen).toHaveLength(1);expect(seen[0]!.url).toBe('/v1/models');expect(seen[0]!.authorization).toBe('Bearer '+key);
+  reply=200;
+  server.removeAllListeners('request');
+  server.on('request',(req,res)=>{seen.push({url:req.url,authorization:req.headers.authorization});res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({data:[{id:'other/model'}]}));});
+  const missing=await f.request(`providers/${id}/test`,'POST',{});
+  expect(missing.json.data.status).toBe('model_not_listed');
+  server.removeAllListeners('request');
+  server.on('request',(req,res)=>{seen.push({url:req.url,authorization:req.headers.authorization});res.writeHead(401,{'Content-Type':'application/json'});res.end('{}');});
   reply=401;
   const denied=await f.request(`providers/${id}/test`,'POST',{});
   expect(denied.json.data.status).toBe('invalid_credentials');

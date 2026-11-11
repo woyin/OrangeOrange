@@ -69,7 +69,7 @@ export type RuntimeOptions = {
   modelSettled?: (request:{conversationId:number;reservationId?:string;message:unknown})=>void;
   /** 在每次模型发送前等待持久化暂停屏障，不消耗预算或调用供应商。 */
   /** 控制面接管供应商错误重试；返回固定错误码，不把原响应存入审计。 */
-  modelFailure?: (request:{conversationId:number;code:string;retryable:boolean})=>void;
+  modelFailure?: (request:{conversationId:number;code:string;retryable:boolean;detail?:string})=>void;
   modelGate?: (request:{conversationId:number;signal?:AbortSignal})=>Promise<void>;
   toolGateway?: (call: {name:string; args:unknown; scope:string; conversationId:number; taskId:number; requestIds:string[]; callId:string; signal?:AbortSignal}, execute:()=>Promise<any>)=>Promise<any>;
 };
@@ -104,7 +104,7 @@ export async function openRuntime(
         if (options.modelFailure && message?.stopReason === "error" && !requestOptions?.signal?.aborted) {
           const error = String(message.errorMessage ?? "");
           const code = /\b429\b/.test(error) ? "MODEL_RATE_LIMITED" : /\b5\d\d\b/.test(error) ? "MODEL_SERVER_ERROR" : /timeout|timed out/i.test(error) ? "MODEL_TIMEOUT" : "MODEL_ERROR";
-          options.modelFailure({conversationId,code,retryable:code !== "MODEL_ERROR"});
+          options.modelFailure({conversationId,code,retryable:code !== "MODEL_ERROR",detail:error.slice(0, 500)});
           return {...message,errorMessage:"CONTROL_MODEL_ERROR"};
         }
         return message;

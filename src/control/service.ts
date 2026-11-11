@@ -18,6 +18,7 @@ import { AuthService } from './security.js';
 import { PolicyGateway, type ToolCall, type ToolDescriptor, type Approval } from './policy.js';
 import { PiAdapter, type RuntimeOptions } from '../pi-adapter.js';
 import { config } from '../config.js';
+import { describeError, log } from './log.js';
 import { telegramAdapter } from '../channels/telegram.js';
 import { chunks, SendFailure, type Inbound } from '../channels/types.js';
 const appPackage=JSON.parse(readFileSync(new URL('../../package.json',import.meta.url),'utf8'));
@@ -241,10 +242,11 @@ export class ControlService {
             }
             await this.observe(this.get('tasks', t.id));
         } }
-    private recordModelFailure(request: { conversationId: number; code: string; retryable: boolean }) {
+    private recordModelFailure(request: { conversationId: number; code: string; retryable: boolean; detail?: string }) {
         if (this.closed || this.stopped) return;
         const task = this.list('tasks').find(t => ['RUNNING', 'WAITING_APPROVAL', 'PAUSED'].includes(t.status) && request.conversationId === this.get('conversations', t.conversationId).piConversationId);
-        if (task) this.store.put('tasks', task.id, { ...task, modelFailure: { code: request.code, retryable: request.retryable } });
+        log(request.retryable ? 'warn' : 'error', 'task.model_failed', { taskId: task?.id, code: request.code, retryable: request.retryable, detail: request.detail });
+        if (task) this.store.put('tasks', task.id, { ...task, modelFailure: { code: request.code, retryable: request.retryable, detail: request.detail } });
     }
     private async waitForTask(id: string, signal?: AbortSignal) {
         while (true) {
@@ -405,13 +407,13 @@ export class ControlService {
             return;
         this.syncMailTasks();
         await this.finishTasks();
-        for(const t of this.list('tasks').filter(t=>t.status==='RETRY_WAIT'&&t.nextRetryAt<=Date.now()))this.change(t,'QUEUED');
+        for(const t of this.store.tasksWithStatuses(['RETRY_WAIT']).filter(t=>t.nextRetryAt<=Date.now()))this.change(t,'QUEUED');
         for(const [id,detach] of this.observers)if(terminal.has(this.get('tasks',id).status)){detach();this.observers.delete(id);}
         this.cleanup();
         await this.automate();
         this.dispatchMailRules();
-        const active = this.list('tasks').filter(t => t.executionKind !== 'connector' && (['RUNNING', 'WAITING_APPROVAL'].includes(t.status) || (t.status === 'PAUSED' && t.piSubmissionId)));
-        for (const t of this.list('tasks').filter(t => t.executionKind !== 'connector' && t.status === 'QUEUED')) {
+        const active = this.store.tasksWithStatuses(['RUNNING','WAITING_APPROVAL','PAUSED']).filter(t => t.executionKind !== 'connector');
+        for (const t of this.store.tasksWithStatuses(['QUEUED']).filter(t => t.executionKind !== 'connector')) {
             if (active.length >= Math.max(1, Math.min(2, this.store.setting<RecordData>('config', {}).maxConcurrentRuns ?? 2)))
                 break;
             if (active.some(a => a.conversationId === t.conversationId))
@@ -427,22 +429,25 @@ export class ControlService {
                 this.store.put('tasks', t.id, { ...this.get('tasks', t.id), piSubmissionId: submitted.id });
                 await this.observe(this.get('tasks', t.id));
             }
-            catch {
+            catch (error) {
+                log('error', 'task.submit_failed', { taskId: t.id, conversationId: t.conversationId, provider: t.retryProvider?.id, error: describeError(error) });
                 this.change(this.get('tasks', t.id), 'FAILED', 'SUBMISSION_FAILED');
             }
         }
         await this.channels();
-        for(const task of this.list('tasks').filter(t=>t.channelId&&terminal.has(t.status))){const deliveries=this.list('outbox').filter(o=>o.taskId===task.id);if(!deliveries.length)continue;const status=deliveries.every(o=>o.state==='SENT')?'SENT':deliveries.some(o=>o.state==='DELIVERY_UNCERTAIN')?'DELIVERY_UNCERTAIN':deliveries.some(o=>o.state==='FAILED')?'FAILED':'PENDING';if(task.deliveryStatus!==status){this.store.put('tasks',task.id,{...task,deliveryStatus:status});this.store.event('delivery.changed',task.id,{status});}}
+        for(const task of this.store.tasksAwaitingDelivery()){const deliveries=this.list('outbox').filter(o=>o.taskId===task.id);if(!deliveries.length)continue;const status=deliveries.every(o=>o.state==='SENT')?'SENT':deliveries.some(o=>o.state==='DELIVERY_UNCERTAIN')?'DELIVERY_UNCERTAIN':deliveries.some(o=>o.state==='FAILED')?'FAILED':'PENDING';if(task.deliveryStatus!==status){this.store.put('tasks',task.id,{...task,deliveryStatus:status});this.store.event('delivery.changed',task.id,{status});}}
     }
-    catch {
+    catch (error) {
         this.lastError = 'WORKER_ERROR';
+        log('error', 'worker.tick_failed', { error: describeError(error) });
     }
     finally {
         this.busy = false;
     } }
-    private async finishTasks() { for (const t of this.list('tasks').filter(t => ['RUNNING', 'WAITING_APPROVAL'].includes(t.status) && t.piSubmissionId)) {
+    private async finishTasks() { for (const t of this.store.tasksWithStatuses(['RUNNING','WAITING_APPROVAL']).filter(t => t.piSubmissionId)) {
         const result = await this.adapter.dispatch('input.get', { id: t.piSubmissionId });
         if (['done', 'unanswered', 'withdrawn'].includes(result.status)) {
+            if (result.status === 'unanswered') log('warn', 'task.model_answered_nothing', { taskId: t.id, reason: result.reason ?? 'unknown', detail: String(result.detail ?? '').slice(0, 300) });
             const retryable=result.status==='unanswered'&&result.reason==='model_error'&&(t.modelFailure?.retryable===true||/\b429\b|\b5\d\d\b|timeout|timed out/i.test(String(result.detail??'')));
             const unsafe=this.list('operations').some(o=>o.taskId===t.id&&o.risk!=='read');
             if(retryable&&!unsafe&&t.attempt<2&&Date.now()-t.startedAt<t.budget.maxDurationMs){const providers=this.list('providers').sort((a,b)=>(a.priority??0)-(b.priority??0));const retry=this.change(t,'RETRY_WAIT','TRANSIENT_MODEL_ERROR');const attempt=t.attempt+1;this.store.put('tasks',t.id,{...retry,attempt,piSubmissionId:undefined,piRequestId:`${t.id}:attempt:${attempt}`,retryProvider:providers[Math.min(attempt,providers.length-1)],nextRetryAt:Date.now()+500*2**t.attempt+Math.floor(Math.random()*100)});this.observers.get(t.id)?.();this.observers.delete(t.id);continue;}

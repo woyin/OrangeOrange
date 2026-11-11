@@ -89,6 +89,7 @@ export function testOutcome(kind:'provider'|'channel',result:any):{title:string;
   const target=kind==='provider'?'模型服务':'消息通道';
   if(status==='online'||status==='connected')return {ok:true,title:`${target}连接正常`,detail:kind==='provider'?'已能访问该地址，实际回复质量由对话内容决定。':'已能访问该通道，实际收发仍受平台限制。'};
   if(status==='invalid_credentials')return {ok:false,title:`${target}拒绝了密钥`,detail:kind==='provider'?'请确认密钥正确、未过期，且属于该 API 地址对应的账号。':'请确认 Bot Token 正确、未撤销，并属于预期机器人。'};
+  if(status==='model_not_listed')return {ok:false,title:'该地址没有提供这个模型',detail:'密钥有效，但模型 ID 不在服务的模型列表中。请核对模型名（区分点号与连字符）后重试。'};
   if(status==='unverified')return {ok:true,title:`${target}地址可达`,detail:'该服务没有提供模型列表接口，因此只确认了地址连通；密钥是否正确需通过实际对话确认。'};
   if(status==='unavailable')return {ok:false,title:`无法连接${target}`,detail:'请确认地址可访问、网络通畅，且服务未处于限制状态。'};
   return {ok:false,title:`${target}测试未完成`,detail:'请稍后重试；若持续失败，请查看技术详情。'};

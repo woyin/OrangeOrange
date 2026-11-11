@@ -137,6 +137,14 @@ export class ControlStore {
     return Buffer.concat([cipher.update(row.cipher as Uint8Array),cipher.final()]).toString('utf8');
   }
   deleteSecret(name:string):void {this.transaction(()=>{this.db.prepare('DELETE FROM secrets WHERE name=?').run(name);this.audit('owner','secret.delete',name,'deleted');});}
+  tasksWithStatuses(statuses: string[]): any[] {
+    if (!statuses.length) return [];
+    const marks = statuses.map(() => '?').join(',');
+    return this.db.prepare(`SELECT value FROM entities WHERE kind='tasks' AND json_extract(value,'$.status') IN (${marks})`).all(...statuses).map(r => JSON.parse(String(r.value)));
+  }
+  tasksAwaitingDelivery(): any[] {
+    return this.db.prepare("SELECT value FROM entities WHERE kind='tasks' AND json_extract(value,'$.channelId') IS NOT NULL AND json_extract(value,'$.status') IN ('SUCCEEDED','FAILED','CANCELLED')").all().map(r => JSON.parse(String(r.value)));
+  }
   secretMetadata():{name:string,configured:boolean}[] {return this.db.prepare('SELECT name FROM secrets').all().map(r=>({name:String(r.name),configured:true}));}
   private indexMemory(id:string,m:Record<string,unknown>):void {
     this.db.prepare('DELETE FROM memory_fts WHERE id=?').run(id);
@@ -151,15 +159,17 @@ export class ControlStore {
   }
   private refreshMemories():void {this.db.exec('DELETE FROM memory_fts');for(const m of this.list<Record<string,unknown>>('memories'))this.indexMemory(String(m.id),m);}
   searchMemories(query:string,scope?:string):any[] {
-    if(!this.maintenance)this.transaction(()=>this.refreshMemories());
     if(!query.trim())return [];
     const match=memoryTokens(query).split(' ').map(token=>'"'+token+'"').join(' AND ');
     const sql='SELECT id FROM memory_fts WHERE memory_fts MATCH ?'+(scope?' AND scope=?':'')+' ORDER BY rank';
-    return this.db.prepare(sql).all(...(scope?[match,scope]:[match])).map(r=>this.get<Record<string,unknown>>('memories',String(r.id))).filter(m=>{
-      if(!m||m.status!=='active'||m.secret||(m.sensitive&&m.sensitiveApproved!==true)||m.kind==='secret'||!String(m.content??'').toLowerCase().includes(query.toLowerCase()))return false;
-      const expiry=m.expires_at??m.expiresAt;
-      return expiry==null||(typeof expiry==='string'?Date.parse(expiry):Number(expiry))>Date.now();
-    }).slice(0,100);
+    const drop = (id:string) => { this.db.prepare('DELETE FROM memory_fts WHERE id=?').run(id); return undefined; };
+    return this.db.prepare(sql).all(...(scope?[match,scope]:[match])).map(r => ({ id: String(r.id), m: this.get<Record<string,unknown>>('memories', String(r.id)) })).map(({ id, m }) => {
+      if (!m) return drop(id);
+      if (m.status !== 'active' || m.secret || (m.sensitive && m.sensitiveApproved !== true) || m.kind === 'secret') return drop(id);
+      const expiry = m.expires_at ?? m.expiresAt;
+      if (expiry != null && !((typeof expiry === 'string' ? Date.parse(expiry) : Number(expiry)) > Date.now())) return drop(id);
+      return m;
+    }).filter((m): m is Record<string,unknown> => !!m && String(m.content ?? '').toLowerCase().includes(query.toLowerCase())).slice(0,100);
   }
   close():void {if(this.closed)return;this.db.close();closeSync(this.lockFd);this.closed=true;}
 }
