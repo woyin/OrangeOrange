@@ -639,6 +639,11 @@ export class ControlService {
     async listBackups() { return this.operations.listBackups(); }
     async snapshot() { return this.operations.createBackup(); }
     async restore(id: string) { return this.operations.restore(id); }
+    ready():boolean {
+        if (!this.adapterReady || this.store.maintenance || this.diskLow || this.closed || this.stopped || !this.timer) return false;
+        try { return this.store.db.prepare('SELECT 1 AS ok').get()?.ok === 1; }
+        catch { return false; }
+    }
     get maintenanceActive() { return this.stopped; }
     async close() {
         this.closed = true;

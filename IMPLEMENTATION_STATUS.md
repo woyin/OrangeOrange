@@ -1,6 +1,18 @@
 # SRS 实施追踪
 
-以 docs/SRS.md v1.0 为基线。旧 CLI 功能仅作为可复用基础，不等于新 SRS 已验收。P1/P2 在 M4 通过前不新增开发。
+以 `docs/Home_Durable_Agent_v1.1/SRS.md` 为当前需求基线。下方早期 v1.0 表格和测试数字保留为历史记录，不能用其“未开始”或“部分完成”标签判断当前版本。
+
+## 当前核验结果
+
+- 已提交开发基线：`37e7720`。提交前完整 `npm run test:all` 通过：49 个后端文件、288 项测试；14 项桌面/手机浏览器测试；3 项前端事件测试；HTTP 客户端契约、类型检查及前后端构建通过。
+- 提交后补查 SYS-005：原 readiness 仅查内存标志，注入数据库不可用时仍返回 200。现已增加数据库 `SELECT 1`、调度器已启动和服务未停机检查，失败返回 503；liveness 仍返回 200。`tests/control-health.test.ts` 与 `tests/control-api.test.ts` 合计 14 项及类型检查通过。此后改动尚未运行完整门禁，也未提交。
+- 离线管理员密码恢复：`src/control/admin-recovery.ts`、`docs/ADMIN-RECOVERY.md`；4 项真实子进程测试通过。需要停服务、独占锁、原主密钥与受限密码文件；恢复撤销所有会话。
+- ARM64 镜像与恢复、47 文件 283 项容器测试是较早版本证据，不覆盖后续记忆策略与密码恢复改动。
+- 208 条需求和 42 项验收的逐项 v1.1 映射尚未完成。不得据完整测试通过声称所有 P0 已交付。
+- 真实 Gmail、真实模型/Telegram、真实 OpenClaw/Hermes 备份、OpenWrt、AMD64 最新应用镜像及 72 小时稳定性仍缺验收证据。M6/M7 的 Browser Worker、Bot Profiles、Routines 与多 Agent Supervisor 为明确未交付的后续工作。
+
+## 历史追踪（待逐项替换）
+
 
 ## 当前阶段
 

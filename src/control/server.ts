@@ -61,7 +61,8 @@ export async function startControlServer(options: ServerOptions) {
                 return;
             }
             if (path === '/health/ready') {
-                send(res, service.adapterReady && !service.store.maintenance && !service.diskLow ? 200 : 503, { status: service.adapterReady && !service.store.maintenance && !service.diskLow ? 'ready' : 'protected' }, requestId);
+                const ready = service.ready();
+                send(res, ready ? 200 : 503, { status: ready ? 'ready' : 'protected' }, requestId);
                 return;
             }
             if (!path.startsWith('/api/v1/')) {
